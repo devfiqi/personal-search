@@ -1,6 +1,6 @@
 # Personal Search
 
-A local-first search engine for personal data, built as a practical way to learn and implement distributed systems fundamentals.
+A local search engine for personal data, built as a practical way to learn and implement distributed systems fundamentals.
 
 ## Overview
 
