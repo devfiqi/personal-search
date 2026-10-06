@@ -34,6 +34,8 @@ final class HotKeyManager: ObservableObject {
     private var handler: EventHandlerRef?
     private var current: SearchShortcut?
 
+    var activeShortcut: SearchShortcut? { current }
+
     private init() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(
@@ -52,11 +54,13 @@ final class HotKeyManager: ObservableObject {
     }
 
     func registerSavedShortcut() {
-        if let saved = UserDefaults.standard.string(forKey: "searchShortcut") {
-            register(SearchShortcut(rawValue: saved) ?? .commandShiftSpace)
+        let saved = UserDefaults.standard.string(forKey: "searchShortcut")
+        let preferred = SearchShortcut(rawValue: saved ?? "") ?? .commandShiftSpace
+        if register(preferred) {
+            UserDefaults.standard.set(preferred.rawValue, forKey: "searchShortcut")
             return
         }
-        for shortcut in SearchShortcut.allCases where register(shortcut) {
+        for shortcut in SearchShortcut.allCases where shortcut != preferred && register(shortcut) {
             UserDefaults.standard.set(shortcut.rawValue, forKey: "searchShortcut")
             return
         }
@@ -124,7 +128,10 @@ struct ShortcutSettingsView: View {
         .formStyle(.grouped)
         .frame(width: 440, height: 220)
         .onChange(of: shortcut) { _, newValue in
-            if let value = SearchShortcut(rawValue: newValue) { HotKeyManager.shared.register(value) }
+            guard let value = SearchShortcut(rawValue: newValue) else { return }
+            if !HotKeyManager.shared.register(value), let active = HotKeyManager.shared.activeShortcut {
+                shortcut = active.rawValue
+            }
         }
     }
 }
