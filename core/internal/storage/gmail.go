@@ -6,8 +6,9 @@ import (
 )
 
 type GmailAccount struct {
-	Email    string `json:"email"`
-	ClientID string `json:"client_id"`
+	Email        string `json:"email"`
+	ClientID     string `json:"client_id"`
+	SyncComplete bool   `json:"sync_complete"`
 }
 
 func (store *Store) RegisterGmailAccount(ctx context.Context, account GmailAccount) error {
@@ -23,7 +24,7 @@ ON CONFLICT(email) DO UPDATE SET client_id = excluded.client_id, connected_at = 
 }
 
 func (store *Store) ListGmailAccounts(ctx context.Context) ([]GmailAccount, error) {
-	rows, err := store.database.QueryContext(ctx, "SELECT email, client_id FROM gmail_accounts ORDER BY email")
+	rows, err := store.database.QueryContext(ctx, "SELECT email, client_id, sync_complete FROM gmail_accounts ORDER BY email")
 	if err != nil {
 		return nil, fmt.Errorf("list Gmail accounts: %w", err)
 	}
@@ -31,9 +32,11 @@ func (store *Store) ListGmailAccounts(ctx context.Context) ([]GmailAccount, erro
 	accounts := []GmailAccount{}
 	for rows.Next() {
 		var account GmailAccount
-		if err := rows.Scan(&account.Email, &account.ClientID); err != nil {
+		var complete int
+		if err := rows.Scan(&account.Email, &account.ClientID, &complete); err != nil {
 			return nil, fmt.Errorf("read Gmail account: %w", err)
 		}
+		account.SyncComplete = complete != 0
 		accounts = append(accounts, account)
 	}
 	if err := rows.Err(); err != nil {

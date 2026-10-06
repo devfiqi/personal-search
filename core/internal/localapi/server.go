@@ -58,6 +58,10 @@ type GmailConnector interface {
 	Connect(ctx context.Context, clientID string) (gmail.Account, error)
 }
 
+type GmailPageFetcher interface {
+	FetchPage(ctx context.Context, clientID string, refreshToken string, pageToken string) (gmail.Page, error)
+}
+
 func New(socketPath string, store *storage.Store, manager *indexer.Manager) *Server {
 	return NewWithSearcher(socketPath, store, manager, store)
 }
@@ -188,6 +192,38 @@ func (server *Server) handle(ctx context.Context, request Request) Response {
 			return internalFailure(request.ID, err)
 		}
 		return success(request.ID, params)
+	case "gmail_sync":
+		var params struct {
+			Email        string `json:"email"`
+			ClientID     string `json:"client_id"`
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := decodeParams(request.Params, &params); err != nil || params.Email == "" || params.ClientID == "" || params.RefreshToken == "" {
+			return failure(request.ID, "invalid_request", "Gmail sync credentials are required")
+		}
+		fetcher, ok := server.gmail.(GmailPageFetcher)
+		if !ok {
+			return failure(request.ID, "gmail_unavailable", "Gmail syncing is unavailable")
+		}
+		state, err := server.store.GmailSyncState(ctx, params.Email)
+		if err != nil {
+			return failure(request.ID, "gmail_account_not_found", "Gmail account is not connected")
+		}
+		if state.ClientID != params.ClientID {
+			return failure(request.ID, "invalid_request", "Gmail client ID does not match the connected account")
+		}
+		page, err := fetcher.FetchPage(ctx, params.ClientID, params.RefreshToken, state.NextPageToken)
+		if err != nil {
+			return failure(request.ID, "gmail_sync_failed", err.Error())
+		}
+		messages := make([]storage.EmailMessage, len(page.Messages))
+		for index, message := range page.Messages {
+			messages[index] = storage.EmailMessage{GmailID: message.ID, ThreadID: message.ThreadID, Subject: message.Subject, Sender: message.Sender, Recipients: message.Recipients, ReceivedAtNS: message.ReceivedAtNS, Body: message.Body}
+		}
+		if err := server.store.StoreGmailPage(ctx, params.Email, messages, page.NextPageToken); err != nil {
+			return internalFailure(request.ID, err)
+		}
+		return success(request.ID, map[string]any{"indexed": len(messages), "sync_complete": page.NextPageToken == ""})
 	case "gmail_remove_account":
 		var params struct {
 			Email string `json:"email"`

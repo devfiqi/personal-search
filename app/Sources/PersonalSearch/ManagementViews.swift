@@ -135,8 +135,24 @@ struct GmailManagementView: View {
                         ForEach(model.gmailAccounts) { account in
                             HStack {
                                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                                Text(account.email).textSelection(.enabled)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(account.email).textSelection(.enabled)
+                                    Text(account.syncComplete ? "Mail indexed" : "More mail ready to sync")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                                 Spacer()
+                                Button {
+                                    Task { await model.syncGmail(account) }
+                                } label: {
+                                    if model.syncingGmailEmail == account.email {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(model.syncingGmailEmail != nil)
+                                .accessibilityLabel("Sync Gmail for \(account.email)")
                                 Button(role: .destructive) { accountToRemove = account } label: {
                                     Image(systemName: "minus.circle")
                                 }
@@ -177,7 +193,7 @@ struct GmailManagementView: View {
             }
             Button("Cancel", role: .cancel) { accountToRemove = nil }
         } message: {
-            Text("The local Gmail index for this account will be removed as email syncing is added. Gmail itself will not be changed.")
+            Text("The local Gmail index for this account will be removed. Gmail itself will not be changed.")
         }
     }
 }

@@ -34,6 +34,22 @@ enum GmailCredentials {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw CredentialError(status: status) }
     }
 
+    static func refreshToken(for email: String) throws -> String {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: Data(email.utf8),
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data, let token = String(data: data, encoding: .utf8) else {
+            throw CredentialError(status: status)
+        }
+        return token
+    }
+
     private struct CredentialError: LocalizedError {
         let status: OSStatus
         var errorDescription: String? { "Gmail credentials could not be updated in Keychain (\(status))." }

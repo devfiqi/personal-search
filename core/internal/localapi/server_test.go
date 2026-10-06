@@ -159,12 +159,24 @@ func TestServerConnectsAndRegistersGmailAccount(t *testing.T) {
 	if len(listed) != 1 || listed[0].Email != account.Email {
 		t.Fatalf("accounts = %+v", listed)
 	}
+	synced := server.handle(context.Background(), Request{Version: 1, ID: "sync", Method: "gmail_sync", Params: raw(map[string]string{"email": account.Email, "client_id": account.ClientID, "refresh_token": account.RefreshToken})})
+	if !synced.OK {
+		t.Fatalf("sync response = %+v", synced)
+	}
+	results, err := store.Search(context.Background(), "roadmap", 10)
+	if err != nil || len(results) != 1 || results[0].Source != "email" {
+		t.Fatalf("search results = %+v, %v", results, err)
+	}
 }
 
 type fakeGmailConnector struct{}
 
 func (fakeGmailConnector) Connect(context.Context, string) (gmail.Account, error) {
 	return gmail.Account{Email: "person@example.com", ClientID: "client.apps.googleusercontent.com", RefreshToken: "refresh-token"}, nil
+}
+
+func (fakeGmailConnector) FetchPage(context.Context, string, string, string) (gmail.Page, error) {
+	return gmail.Page{Messages: []gmail.Message{{ID: "message", ThreadID: "thread", Subject: "Roadmap", Body: "Local email search"}}}, nil
 }
 
 func waitForSocket(t *testing.T, path string, serverDone <-chan error) {

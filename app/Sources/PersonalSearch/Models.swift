@@ -10,12 +10,14 @@ struct IndexedFolder: Codable, Identifiable, Hashable {
 struct GmailAccount: Codable, Identifiable, Hashable {
     let email: String
     let clientID: String
+    let syncComplete: Bool
 
     var id: String { email }
 
     enum CodingKeys: String, CodingKey {
         case email
         case clientID = "client_id"
+        case syncComplete = "sync_complete"
     }
 }
 
@@ -40,9 +42,10 @@ struct SearchResult: Codable, Identifiable, Hashable {
     let snippet: String
     let score: Double
     let matchType: String
+    let source: String
 
     enum CodingKeys: String, CodingKey {
-        case id, path, name, snippet, score
+        case id, path, name, snippet, score, source
         case matchType = "match_type"
         case extensionName = "extension"
         case modifiedAtNS = "modified_at_ns"
@@ -53,7 +56,10 @@ struct SearchResult: Codable, Identifiable, Hashable {
         return value.isEmpty ? "FILE" : value.uppercased()
     }
 
-    var iconName: String { extensionName == ".pdf" ? "doc.richtext" : "doc.text" }
+    var iconName: String {
+        if source == "email" { return "envelope" }
+        return extensionName == ".pdf" ? "doc.richtext" : "doc.text"
+    }
 
     var matchLabel: String {
         switch matchType {
@@ -116,3 +122,4 @@ struct ExtractionFailure: Codable, Identifiable {
 struct RemoveFolderResult: Codable { let removed: Bool }
 struct ResetResult: Codable { let status: String }
 struct AddFolderResult: Codable { let path: String }
+struct GmailSyncResult: Codable { let indexed: Int; let syncComplete: Bool }

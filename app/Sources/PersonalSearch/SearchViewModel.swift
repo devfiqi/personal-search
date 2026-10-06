@@ -15,6 +15,7 @@ final class SearchViewModel: ObservableObject {
     @Published var startupError: String?
     @Published var notice: String?
     @Published var connectingGmail = false
+    @Published var syncingGmailEmail: String?
 
     private var client: CoreClient?
     private var searchTask: Task<Void, Never>?
@@ -156,12 +157,34 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
+    func syncGmail(_ account: GmailAccount) async {
+        guard let client else { return }
+        syncingGmailEmail = account.email
+        defer { syncingGmailEmail = nil }
+        do {
+            let refreshToken = try GmailCredentials.refreshToken(for: account.email)
+            let _: GmailSyncResult = try await client.request("gmail_sync", params: [
+                "email": account.email,
+                "client_id": account.clientID,
+                "refresh_token": refreshToken,
+            ])
+            notice = nil
+            await refreshGmailAccounts()
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
     func openTopResult() {
         guard let result = results.first else { return }
         open(result)
     }
 
     func open(_ result: SearchResult) {
+        if result.source == "email", let url = URL(string: result.path) {
+            NSWorkspace.shared.open(url)
+            return
+        }
         NSWorkspace.shared.open(URL(fileURLWithPath: result.path))
     }
 
@@ -239,7 +262,8 @@ final class SearchViewModel: ObservableObject {
             modifiedAtNS: Int64(Date().timeIntervalSince1970 * 1_000_000_000),
             snippet: "The [project] launch [notes] and next steps…",
             score: -1,
-            matchType: "keyword"
+            matchType: "keyword",
+            source: "document"
         )]
         return model
     }
