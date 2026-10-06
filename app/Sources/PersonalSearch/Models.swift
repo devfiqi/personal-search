@@ -7,6 +7,30 @@ struct IndexedFolder: Codable, Identifiable, Hashable {
     var displayName: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
+struct GmailAccount: Codable, Identifiable, Hashable {
+    let email: String
+    let clientID: String
+
+    var id: String { email }
+
+    enum CodingKeys: String, CodingKey {
+        case email
+        case clientID = "client_id"
+    }
+}
+
+struct GmailAuthorization: Codable {
+    let email: String
+    let clientID: String
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case email
+        case clientID = "client_id"
+        case refreshToken = "refresh_token"
+    }
+}
+
 struct SearchResult: Codable, Identifiable, Hashable {
     let id: Int64
     let path: String

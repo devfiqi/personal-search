@@ -106,3 +106,78 @@ struct FailureListView: View {
         .frame(width: 600, height: 420)
     }
 }
+
+struct GmailManagementView: View {
+    @EnvironmentObject private var model: SearchViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var clientID = ""
+    @State private var accountToRemove: GmailAccount?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Gmail").font(.title2.bold())
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+            Divider()
+            List {
+                if model.gmailAccounts.isEmpty {
+                    ContentUnavailableView(
+                        "No Gmail Account Connected",
+                        systemImage: "envelope",
+                        description: Text("Connect a Gmail account to make its mail searchable on this Mac.")
+                    )
+                    .listRowSeparator(.hidden)
+                } else {
+                    Section("Connected accounts") {
+                        ForEach(model.gmailAccounts) { account in
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                Text(account.email).textSelection(.enabled)
+                                Spacer()
+                                Button(role: .destructive) { accountToRemove = account } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Disconnect \(account.email)")
+                            }
+                        }
+                    }
+                }
+                Section("Connect Gmail") {
+                    TextField("Google Desktop OAuth Client ID", text: $clientID)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Google Desktop OAuth Client ID")
+                    Text("Use a Desktop OAuth client ID from your Google Cloud project. Personal Search requests read-only Gmail access and stores its refresh token only in your macOS Keychain.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let notice = model.notice {
+                        Text(notice).font(.caption).foregroundStyle(.red)
+                    }
+                    Button {
+                        Task { await model.connectGmail(clientID: clientID.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    } label: {
+                        if model.connectingGmail { ProgressView().controlSize(.small) }
+                        Text(model.connectingGmail ? "Connecting…" : "Connect Gmail")
+                    }
+                    .disabled(model.connectingGmail || clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .frame(width: 600, height: 440)
+        .confirmationDialog(
+            "Disconnect \(accountToRemove?.email ?? "this Gmail account")?",
+            isPresented: Binding(get: { accountToRemove != nil }, set: { if !$0 { accountToRemove = nil } })
+        ) {
+            Button("Disconnect", role: .destructive) {
+                if let accountToRemove { Task { await model.removeGmail(accountToRemove) } }
+                accountToRemove = nil
+            }
+            Button("Cancel", role: .cancel) { accountToRemove = nil }
+        } message: {
+            Text("The local Gmail index for this account will be removed as email syncing is added. Gmail itself will not be changed.")
+        }
+    }
+}

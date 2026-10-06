@@ -6,6 +6,7 @@ final class SearchViewModel: ObservableObject {
     @Published var query = ""
     @Published var results: [SearchResult] = []
     @Published var folders: [IndexedFolder] = []
+    @Published var gmailAccounts: [GmailAccount] = []
     @Published var indexingState = IndexingState()
     @Published var failures: [ExtractionFailure] = []
     @Published var failureCount = 0
@@ -13,6 +14,7 @@ final class SearchViewModel: ObservableObject {
     @Published var searching = false
     @Published var startupError: String?
     @Published var notice: String?
+    @Published var connectingGmail = false
 
     private var client: CoreClient?
     private var searchTask: Task<Void, Never>?
@@ -116,6 +118,40 @@ final class SearchViewModel: ObservableObject {
         catch { notice = error.localizedDescription }
     }
 
+    func connectGmail(clientID: String) async {
+        guard let client else { return }
+        connectingGmail = true
+        defer { connectingGmail = false }
+        do {
+            let authorization: GmailAuthorization = try await client.request("gmail_connect", params: ["client_id": clientID])
+            try GmailCredentials.save(refreshToken: authorization.refreshToken, for: authorization.email)
+            do {
+                let _: GmailAccount = try await client.request("gmail_add_account", params: [
+                    "email": authorization.email, "client_id": authorization.clientID,
+                ])
+            } catch {
+                try? GmailCredentials.remove(for: authorization.email)
+                throw error
+            }
+            notice = nil
+            await refreshGmailAccounts()
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    func removeGmail(_ account: GmailAccount) async {
+        guard let client else { return }
+        do {
+            try GmailCredentials.remove(for: account.email)
+            let _: RemoveFolderResult = try await client.request("gmail_remove_account", params: ["email": account.email])
+            notice = nil
+            await refreshGmailAccounts()
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
     func openTopResult() {
         guard let result = results.first else { return }
         open(result)
@@ -146,12 +182,19 @@ final class SearchViewModel: ObservableObject {
             indexingState = state.indexing
             folders = state.folders
             failureCount = state.failureCount
+            await refreshGmailAccounts()
             connected = true
             startupError = nil
         } catch {
             connected = false
             startupError = error.localizedDescription
         }
+    }
+
+    private func refreshGmailAccounts() async {
+        guard let client else { return }
+        do { gmailAccounts = try await client.request("gmail_accounts") }
+        catch { notice = error.localizedDescription }
     }
 
     private func waitUntilReady(_ client: CoreClient) async throws {

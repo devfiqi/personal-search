@@ -7,6 +7,7 @@ struct SearchView: View {
     @FocusState private var searchFocused: Bool
     @State private var showingFolders = false
     @State private var showingFailures = false
+    @State private var showingGmail = false
     @State private var showingResetConfirmation = false
 
     var body: some View {
@@ -38,6 +39,9 @@ struct SearchView: View {
         }
         .sheet(isPresented: $showingFailures) {
             FailureListView().environmentObject(model)
+        }
+        .sheet(isPresented: $showingGmail) {
+            GmailManagementView().environmentObject(model)
         }
         .confirmationDialog(
             "Reset the local index?",
@@ -89,6 +93,9 @@ struct SearchView: View {
         Menu {
             Button("Add Folder…", systemImage: "folder.badge.plus") { Task { await model.chooseFolder() } }
             Button("Manage Folders", systemImage: "folder") { showingFolders = true }
+            Button(model.gmailAccounts.isEmpty ? "Connect Gmail…" : "Manage Gmail", systemImage: "envelope") {
+                showingGmail = true
+            }
             Divider()
             if model.indexingState.paused {
                 Button("Resume Indexing", systemImage: "play.fill") { Task { await model.setPaused(false) } }
