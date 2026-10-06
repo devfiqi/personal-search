@@ -1,5 +1,4 @@
 GO_TAGS := sqlite_fts5
-PYTHON ?= python3
 
 .PHONY: build test setup-extractor build-app build-core build-bundle test-core test-extractor
 
@@ -24,4 +23,4 @@ test-core:
 	cd core && go test -tags $(GO_TAGS) ./...
 
 test-extractor:
-	PYTHONPATH=extractor/src $(PYTHON) -m unittest discover -s extractor/tests -v
+	PYTHONPATH=extractor/src extractor/.venv/bin/python -m unittest discover -s extractor/tests -v
