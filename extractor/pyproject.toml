@@ -7,8 +7,9 @@ name = "personal-search-extractor"
 version = "0.1.0"
 description = "Local document extraction worker for Personal Search"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pypdf==6.19.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

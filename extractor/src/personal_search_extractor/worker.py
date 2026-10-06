@@ -2,6 +2,8 @@ import json
 import sys
 from typing import Any, TextIO
 
+from personal_search_extractor.pdf import PDFExtractionError, extract_pdf
+
 
 def handle(message: dict[str, Any]) -> dict[str, Any]:
     request_id = message.get("id")
@@ -9,6 +11,33 @@ def handle(message: dict[str, Any]) -> dict[str, Any]:
 
     if operation == "ping":
         return {"id": request_id, "ok": True, "result": {"status": "ready"}}
+
+    if operation == "extract_pdf":
+        path = message.get("path")
+        if not isinstance(path, str) or not path:
+            return {
+                "id": request_id,
+                "ok": False,
+                "error": {
+                    "code": "invalid_request",
+                    "message": "extract_pdf requires a path",
+                },
+            }
+
+        try:
+            result = extract_pdf(path)
+        except PDFExtractionError as error:
+            return {
+                "id": request_id,
+                "ok": False,
+                "error": {"code": error.code, "message": str(error)},
+            }
+
+        return {
+            "id": request_id,
+            "ok": True,
+            "result": {"text": result.text, "page_count": result.page_count},
+        }
 
     return {
         "id": request_id,
