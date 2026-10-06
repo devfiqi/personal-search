@@ -26,6 +26,7 @@ const (
 	defaultAuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
 	defaultTokenEndpoint         = "https://oauth2.googleapis.com/token"
 	defaultProfileEndpoint       = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+	defaultMessagesEndpoint      = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 )
 
 type Account struct {
@@ -39,6 +40,7 @@ type Client struct {
 	AuthorizationEndpoint string
 	TokenEndpoint         string
 	ProfileEndpoint       string
+	MessagesEndpoint      string
 	OpenURL               func(string) error
 	Listen                func(network string, address string) (net.Listener, error)
 	Random                io.Reader
@@ -50,6 +52,7 @@ func NewClient() *Client {
 		AuthorizationEndpoint: defaultAuthorizationEndpoint,
 		TokenEndpoint:         defaultTokenEndpoint,
 		ProfileEndpoint:       defaultProfileEndpoint,
+		MessagesEndpoint:      defaultMessagesEndpoint,
 		OpenURL: func(value string) error {
 			return exec.Command("open", value).Start()
 		},

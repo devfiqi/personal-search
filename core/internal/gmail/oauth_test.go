@@ -65,3 +65,42 @@ func TestConnectRejectsNonGoogleClientID(t *testing.T) {
 		t.Fatalf("Connect() error = %v", err)
 	}
 }
+
+func TestFetchPageRefreshesAndExtractsPlainTextMail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			if err := request.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if request.Form.Get("grant_type") != "refresh_token" {
+				t.Fatalf("grant type = %q", request.Form.Get("grant_type"))
+			}
+			_, _ = io.WriteString(writer, `{"access_token":"access"}`)
+		case "/messages":
+			if request.Header.Get("Authorization") != "Bearer access" {
+				t.Fatal("missing bearer token")
+			}
+			_, _ = io.WriteString(writer, `{"messages":[{"id":"message-1"}],"nextPageToken":"next"}`)
+		case "/messages/message-1":
+			_, _ = io.WriteString(writer, `{"id":"message-1","threadId":"thread-1","internalDate":"1700000000000","payload":{"mimeType":"multipart/alternative","headers":[{"name":"Subject","value":"Project update"},{"name":"From","value":"A <a@example.com>"},{"name":"To","value":"B <b@example.com>"}],"parts":[{"mimeType":"text/plain","body":{"data":"TG9jYWwgc2VhcmNoIG1haWw"}}]}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	client := NewClient()
+	client.TokenEndpoint = server.URL + "/token"
+	client.MessagesEndpoint = server.URL + "/messages"
+	page, err := client.FetchPage(context.Background(), "client.apps.googleusercontent.com", "refresh", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.NextPageToken != "next" || len(page.Messages) != 1 {
+		t.Fatalf("page = %+v", page)
+	}
+	message := page.Messages[0]
+	if message.Subject != "Project update" || message.Body != "Local search mail" || message.ThreadID != "thread-1" {
+		t.Fatalf("message = %+v", message)
+	}
+}
