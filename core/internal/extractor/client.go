@@ -38,6 +38,11 @@ type PDFResult struct {
 	PageCount int    `json:"page_count"`
 }
 
+type VectorMatch struct {
+	ID       int64   `json:"id"`
+	Distance float64 `json:"distance"`
+}
+
 type RemoteError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -48,16 +53,21 @@ func (failure *RemoteError) Error() string {
 }
 
 type request struct {
-	ID        string `json:"id"`
-	Operation string `json:"operation"`
-	Path      string `json:"path,omitempty"`
+	ID        string      `json:"id"`
+	Operation string      `json:"operation"`
+	Path      string      `json:"path,omitempty"`
+	Texts     []string    `json:"texts,omitempty"`
+	IDs       []int64     `json:"ids,omitempty"`
+	Vectors   [][]float32 `json:"vectors,omitempty"`
+	Vector    []float32   `json:"vector,omitempty"`
+	Limit     int         `json:"limit,omitempty"`
 }
 
 type response struct {
-	ID     string       `json:"id"`
-	OK     bool         `json:"ok"`
-	Result PDFResult    `json:"result"`
-	Error  *RemoteError `json:"error"`
+	ID     string          `json:"id"`
+	OK     bool            `json:"ok"`
+	Result json.RawMessage `json:"result"`
+	Error  *RemoteError    `json:"error"`
 }
 
 type callResult struct {
@@ -95,21 +105,66 @@ func NewExecutable(executable string, timeout time.Duration) *Client {
 }
 
 func (client *Client) ExtractPDF(ctx context.Context, path string) (PDFResult, error) {
-	client.mutex.Lock()
-	defer client.mutex.Unlock()
-
-	var lastError error
-	for attempt := 0; attempt < 2; attempt++ {
-		result, retry, err := client.extractPDFLocked(ctx, path)
-		if err == nil {
-			return result, nil
-		}
-		lastError = err
-		if !retry {
-			return PDFResult{}, err
-		}
+	result, err := client.call(ctx, request{Operation: "extract_pdf", Path: path})
+	if err != nil {
+		return PDFResult{}, err
 	}
-	return PDFResult{}, fmt.Errorf("PDF worker failed after retry: %w", lastError)
+	var pdf PDFResult
+	if err := json.Unmarshal(result, &pdf); err != nil {
+		return PDFResult{}, fmt.Errorf("decode PDF worker result: %w", err)
+	}
+	return pdf, nil
+}
+
+func (client *Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return [][]float32{}, nil
+	}
+	result, err := client.call(ctx, request{Operation: "embed", Texts: texts})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Vectors [][]float32 `json:"vectors"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return nil, fmt.Errorf("decode embedding result: %w", err)
+	}
+	if len(payload.Vectors) != len(texts) {
+		return nil, fmt.Errorf("embedding worker returned %d vectors for %d texts", len(payload.Vectors), len(texts))
+	}
+	return payload.Vectors, nil
+}
+
+func (client *Client) IndexVectors(ctx context.Context, ids []int64, vectors [][]float32) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) != len(vectors) {
+		return fmt.Errorf("vector IDs and vectors must have the same length")
+	}
+	_, err := client.call(ctx, request{Operation: "index_vectors", IDs: ids, Vectors: vectors})
+	return err
+}
+
+func (client *Client) SearchVectors(ctx context.Context, vector []float32, limit int) ([]VectorMatch, error) {
+	if len(vector) == 0 {
+		return []VectorMatch{}, nil
+	}
+	if limit <= 0 {
+		return []VectorMatch{}, nil
+	}
+	result, err := client.call(ctx, request{Operation: "search_vectors", Vector: vector, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Matches []VectorMatch `json:"matches"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return nil, fmt.Errorf("decode vector search result: %w", err)
+	}
+	return payload.Matches, nil
 }
 
 func (client *Client) Close() error {
@@ -118,14 +173,32 @@ func (client *Client) Close() error {
 	return client.stopLocked(false)
 }
 
-func (client *Client) extractPDFLocked(ctx context.Context, path string) (PDFResult, bool, error) {
+func (client *Client) call(ctx context.Context, message request) (json.RawMessage, error) {
+	client.mutex.Lock()
+	defer client.mutex.Unlock()
+
+	var lastError error
+	for attempt := 0; attempt < 2; attempt++ {
+		result, retry, err := client.callLocked(ctx, message)
+		if err == nil {
+			return result, nil
+		}
+		lastError = err
+		if !retry {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("worker failed after retry: %w", lastError)
+}
+
+func (client *Client) callLocked(ctx context.Context, message request) (json.RawMessage, bool, error) {
 	if err := client.startLocked(); err != nil {
-		return PDFResult{}, true, err
+		return nil, true, err
 	}
 
 	client.nextRequest++
 	requestID := strconv.FormatUint(client.nextRequest, 10)
-	message := request{ID: requestID, Operation: "extract_pdf", Path: path}
+	message.ID = requestID
 	encoder := client.encoder
 	decoder := client.decoder
 
@@ -150,27 +223,27 @@ func (client *Client) extractPDFLocked(ctx context.Context, path string) (PDFRes
 	case result := <-completed:
 		if result.err != nil {
 			_ = client.stopLocked(true)
-			return PDFResult{}, true, fmt.Errorf("communicate with PDF worker: %w", result.err)
+			return nil, true, fmt.Errorf("communicate with worker: %w", result.err)
 		}
 		if result.response.ID != requestID {
 			_ = client.stopLocked(true)
-			return PDFResult{}, true, fmt.Errorf("PDF worker returned mismatched response ID")
+			return nil, true, fmt.Errorf("worker returned mismatched response ID")
 		}
 		if !result.response.OK {
 			if result.response.Error == nil {
-				return PDFResult{}, false, fmt.Errorf("PDF worker returned an unspecified error")
+				return nil, false, fmt.Errorf("worker returned an unspecified error")
 			}
-			return PDFResult{}, false, result.response.Error
+			return nil, false, result.response.Error
 		}
 		return result.response.Result, false, nil
 	case <-ctx.Done():
 		_ = client.stopLocked(true)
 		drainCall(completed)
-		return PDFResult{}, false, ctx.Err()
+		return nil, false, ctx.Err()
 	case <-timer.C:
 		_ = client.stopLocked(true)
 		drainCall(completed)
-		return PDFResult{}, true, fmt.Errorf("PDF extraction timed out")
+		return nil, true, fmt.Errorf("worker call timed out")
 	}
 }
 
