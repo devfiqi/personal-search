@@ -103,10 +103,14 @@ final class SearchViewModel: ObservableObject {
     func reset() async {
         guard let client else { return }
         do {
+            for account in gmailAccounts {
+                try GmailCredentials.remove(for: account.email)
+            }
             let _: ResetResult = try await client.request("reset")
             query = ""
             results = []
             failures = []
+            gmailAccounts = []
             notice = nil
             await refreshState()
         } catch { notice = error.localizedDescription }

@@ -140,8 +140,19 @@ func (store *Store) RemoveFolder(ctx context.Context, path string) (bool, error)
 }
 
 func (store *Store) Reset(ctx context.Context) error {
-	if _, err := store.database.ExecContext(ctx, "DELETE FROM folders"); err != nil {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin local index reset: %w", err)
+	}
+	defer transaction.Rollback()
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM folders"); err != nil {
 		return fmt.Errorf("reset local index: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM gmail_accounts"); err != nil {
+		return fmt.Errorf("reset Gmail accounts: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit local index reset: %w", err)
 	}
 	return nil
 }
