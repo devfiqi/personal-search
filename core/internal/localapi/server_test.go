@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,48 @@ func TestServerSupportsFolderSearchControlsAndReset(t *testing.T) {
 	foldersResponse := request(t, connection, reader, Request{Version: 1, ID: "6", Method: "folders"}, true)
 	if folders := decodeResult[[]storage.Folder](t, foldersResponse); len(folders) != 0 {
 		t.Fatalf("folders after reset = %+v", folders)
+	}
+
+	cancel()
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServerRejectsAnAlreadyRunningSocket(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "personal-search-api-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	store, err := storage.Open(filepath.Join(root, "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := indexer.NewManager(indexer.New(store, nil), store)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := manager.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	socket := filepath.Join(root, "search.sock")
+	server := New(socket, store, manager)
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.Serve(ctx) }()
+	waitForSocket(t, socket, serverDone)
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- New(socket, store, manager).Serve(ctx) }()
+	select {
+	case err := <-secondDone:
+		if err == nil || !strings.Contains(err.Error(), "already running") {
+			t.Fatalf("second serve error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second serve did not stop")
 	}
 
 	cancel()

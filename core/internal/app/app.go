@@ -70,6 +70,8 @@ func runServe(args []string, errorsOutput io.Writer) error {
 	manager := indexer.NewManager(indexer.New(store, worker), store)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, stopParent := cancelWhenParentExits(ctx)
+	defer stopParent()
 	if err := manager.Start(ctx); err != nil {
 		return err
 	}
@@ -165,6 +167,27 @@ func writeJSON(output io.Writer, value any) error {
 	encoder := json.NewEncoder(output)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(value)
+}
+
+func cancelWhenParentExits(ctx context.Context) (context.Context, context.CancelFunc) {
+	parent := os.Getppid()
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if os.Getppid() != parent {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 func defaultValue(environmentName string, fallback string) string {

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/devfiqi/personal-search/core/internal/indexer"
 	"github.com/devfiqi/personal-search/core/internal/storage"
@@ -241,10 +243,28 @@ func removeStaleSocket(path string) error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return errors.New("local API path exists and is not a socket")
 	}
+	if !ownsSocket(info) {
+		return errors.New("local search service is already running")
+	}
+
+	dialer := net.Dialer{Timeout: 200 * time.Millisecond}
+	connection, err := dialer.Dial("unix", path)
+	if err == nil {
+		_ = connection.Close()
+		return errors.New("local search service is already running")
+	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove stale local socket: %w", err)
 	}
 	return nil
+}
+
+func ownsSocket(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return stat.Uid == uint32(os.Getuid())
 }
 
 func decodeParams(raw json.RawMessage, target any) error {

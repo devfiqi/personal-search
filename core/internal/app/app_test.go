@@ -2,8 +2,11 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRunInitializesDatabase(t *testing.T) {
@@ -17,6 +20,19 @@ func TestRunInitializesDatabase(t *testing.T) {
 
 	if got, want := output.String(), "{\"database\":\""+databasePath+"\",\"status\":\"ready\"}\n"; got != want {
 		t.Fatalf("Run() output = %q, want %q", got, want)
+	}
+}
+
+func TestCancelWhenParentExitsKeepsALivingParent(t *testing.T) {
+	ctx, cancel := cancelWhenParentExits(context.Background())
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		t.Fatal("service stopped while its parent was still running")
+	case <-time.After(500 * time.Millisecond):
+	}
+	if os.Getppid() <= 0 {
+		t.Fatal("parent process id was unavailable")
 	}
 }
 
