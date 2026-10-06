@@ -1,9 +1,9 @@
 package indexer
 
-// folderWatcher reports that a selected folder tree changed.
-// Events are coalesced: a receive means one or more paths changed.
+// folderWatcher reports paths that changed beneath selected folder trees.
 type folderWatcher interface {
-	Events() <-chan struct{}
+	Events() <-chan string
+	Overflowed() bool
 	Replace(paths []string) error
 	Count() int
 	Close() error

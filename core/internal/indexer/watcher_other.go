@@ -8,13 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/fsnotify/fsnotify"
 )
 
 type fsnotifyWatcher struct {
-	watcher *fsnotify.Watcher
-	events  chan struct{}
+	watcher  *fsnotify.Watcher
+	events   chan string
+	overflow atomic.Bool
 
 	mutex  sync.Mutex
 	count  int
@@ -29,14 +31,16 @@ func newFolderWatcher() (folderWatcher, error) {
 	}
 	folderWatcher := &fsnotifyWatcher{
 		watcher: watcher,
-		events:  make(chan struct{}, 1),
+		events:  make(chan string, 256),
 		done:    make(chan struct{}),
 	}
 	go folderWatcher.forward()
 	return folderWatcher, nil
 }
 
-func (watcher *fsnotifyWatcher) Events() <-chan struct{} { return watcher.events }
+func (watcher *fsnotifyWatcher) Events() <-chan string { return watcher.events }
+
+func (watcher *fsnotifyWatcher) Overflowed() bool { return watcher.overflow.Swap(false) }
 
 func (watcher *fsnotifyWatcher) Replace(paths []string) error {
 	watcher.mutex.Lock()
@@ -105,20 +109,21 @@ func (watcher *fsnotifyWatcher) forward() {
 	defer close(watcher.done)
 	for {
 		select {
-		case _, ok := <-watcher.watcher.Events:
+		case event, ok := <-watcher.watcher.Events:
 			if !ok {
 				return
 			}
-			watcher.notify()
+			watcher.notify(event.Name)
 		case _, ok := <-watcher.watcher.Errors:
 			if !ok {
 				return
 			}
+			watcher.notify("")
 		}
 	}
 }
 
-func (watcher *fsnotifyWatcher) notify() {
+func (watcher *fsnotifyWatcher) notify(path string) {
 	watcher.mutex.Lock()
 	closed := watcher.closed
 	watcher.mutex.Unlock()
@@ -126,7 +131,8 @@ func (watcher *fsnotifyWatcher) notify() {
 		return
 	}
 	select {
-	case watcher.events <- struct{}{}:
+	case watcher.events <- path:
 	default:
+		watcher.overflow.Store(true)
 	}
 }

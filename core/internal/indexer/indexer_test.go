@@ -89,6 +89,104 @@ func TestIndexFolderIndexesReusesAndRemovesDocuments(t *testing.T) {
 	}
 }
 
+func TestIndexFolderRemovesDocumentsWhenFolderDisappears(t *testing.T) {
+	ctx := context.Background()
+	temporaryDirectory := t.TempDir()
+	documentsDirectory := filepath.Join(temporaryDirectory, "documents")
+	if err := os.Mkdir(documentsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(documentsDirectory, "notes.txt"), []byte("orphaned index entry"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := storage.Open(filepath.Join(temporaryDirectory, "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service := New(store, nil)
+	if _, err := service.IndexFolder(ctx, documentsDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(documentsDirectory); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := service.IndexFolder(ctx, documentsDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Removed != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	results, err := store.Search(ctx, "orphaned", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Search() returned %d stale results", len(results))
+	}
+}
+
+func TestIndexPathUpdatesAndRemovesOnlyChangedPath(t *testing.T) {
+	ctx := context.Background()
+	temporaryDirectory := t.TempDir()
+	documentsDirectory := filepath.Join(temporaryDirectory, "documents")
+	if err := os.Mkdir(documentsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	firstPath := filepath.Join(documentsDirectory, "first.txt")
+	secondPath := filepath.Join(documentsDirectory, "second.txt")
+	if err := os.WriteFile(firstPath, []byte("first original token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte("second stays indexed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := storage.Open(filepath.Join(temporaryDirectory, "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service := New(store, nil)
+	if _, err := service.IndexFolder(ctx, documentsDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firstPath, []byte("first revised token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.IndexPath(ctx, documentsDirectory, firstPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(secondPath); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.IndexPath(ctx, documentsDirectory, secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.Removed != 1 {
+		t.Fatalf("removal report = %+v", removed)
+	}
+
+	assertSearchCount(t, store, "revised", 1)
+	assertSearchCount(t, store, "original", 0)
+	assertSearchCount(t, store, "stays", 0)
+}
+
+func assertSearchCount(t *testing.T, store *storage.Store, query string, count int) {
+	t.Helper()
+	results, err := store.Search(context.Background(), query, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != count {
+		t.Fatalf("Search(%q) returned %d results, want %d", query, len(results), count)
+	}
+}
+
 type fakePDFExtractor struct {
 	result extractor.PDFResult
 	err    error

@@ -37,6 +37,7 @@ func TestManagerIndexesChangesAndHonorsPause(t *testing.T) {
 	if err := os.WriteFile(firstPath, []byte("orchid notes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	manager.requestPath(firstPath)
 	waitForResult(t, store, "orchid", 1)
 
 	manager.SetPaused(true)
@@ -44,6 +45,7 @@ func TestManagerIndexesChangesAndHonorsPause(t *testing.T) {
 	if err := os.WriteFile(secondPath, []byte("saffron notes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	manager.requestPath(secondPath)
 	time.Sleep(150 * time.Millisecond)
 	assertResultCount(t, store, "saffron", 0)
 
@@ -52,6 +54,7 @@ func TestManagerIndexesChangesAndHonorsPause(t *testing.T) {
 	if err := os.Remove(firstPath); err != nil {
 		t.Fatal(err)
 	}
+	manager.requestPath(firstPath)
 	waitForResult(t, store, "orchid", 0)
 }
 
@@ -90,10 +93,13 @@ func TestManagerWatchesFolderWithMissingEntry(t *testing.T) {
 	if err := os.WriteFile(notesPath, []byte("alpha notes revised token"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	manager.requestPath(notesPath)
 	waitForResult(t, store, "revised", 1)
-	if err := os.WriteFile(filepath.Join(nested, "extra.txt"), []byte("nested zephyr token"), 0o600); err != nil {
+	extraPath := filepath.Join(nested, "extra.txt")
+	if err := os.WriteFile(extraPath, []byte("nested zephyr token"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	manager.requestPath(extraPath)
 	waitForResult(t, store, "zephyr", 1)
 
 	state := manager.State()

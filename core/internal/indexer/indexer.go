@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -32,6 +33,9 @@ type Store interface {
 	DocumentIsCurrent(ctx context.Context, path string, sizeBytes int64, modifiedAtNS int64) (bool, error)
 	UpsertDocument(ctx context.Context, document storage.Document) error
 	DeleteMissingDocuments(ctx context.Context, folderID int64, seen map[string]struct{}) (int, error)
+	DeleteMissingDocumentsUnder(ctx context.Context, folderID int64, root string, seen map[string]struct{}) (int, error)
+	DeleteDocumentsForFolder(ctx context.Context, folderPath string) (int, error)
+	DeleteDocumentsAtPath(ctx context.Context, folderID int64, path string) (int, error)
 }
 
 type Indexer struct {
@@ -69,6 +73,13 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 	absoluteRoot = filepath.Clean(absoluteRoot)
 
 	info, err := os.Stat(absoluteRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		removed, deleteErr := indexer.store.DeleteDocumentsForFolder(ctx, absoluteRoot)
+		if deleteErr != nil {
+			return Report{}, deleteErr
+		}
+		return Report{Folder: absoluteRoot, Removed: removed, Errors: []FileError{}}, nil
+	}
 	if err != nil {
 		return Report{}, fmt.Errorf("read folder: %w", err)
 	}
@@ -81,12 +92,69 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 		return Report{}, err
 	}
 
-	report := Report{Folder: absoluteRoot, Errors: []FileError{}}
-	seen := make(map[string]struct{})
+	return indexer.indexTree(ctx, folderID, absoluteRoot, absoluteRoot)
+}
 
-	err = filepath.WalkDir(absoluteRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+func (indexer *Indexer) IndexPath(ctx context.Context, root string, changedPath string) (Report, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return Report{}, fmt.Errorf("resolve folder path: %w", err)
+	}
+	absoluteRoot = filepath.Clean(absoluteRoot)
+	absolutePath, err := filepath.Abs(changedPath)
+	if err != nil {
+		return Report{}, fmt.Errorf("resolve changed path: %w", err)
+	}
+	absolutePath = filepath.Clean(absolutePath)
+	if !isWithin(absoluteRoot, absolutePath) {
+		return Report{}, fmt.Errorf("changed path is outside indexed folder")
+	}
+
+	rootInfo, err := os.Stat(absoluteRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		removed, deleteErr := indexer.store.DeleteDocumentsForFolder(ctx, absoluteRoot)
+		if deleteErr != nil {
+			return Report{}, deleteErr
+		}
+		return Report{Folder: absoluteRoot, Removed: removed, Errors: []FileError{}}, nil
+	}
+	if err != nil {
+		return Report{}, fmt.Errorf("read folder: %w", err)
+	}
+	if !rootInfo.IsDir() {
+		return Report{}, fmt.Errorf("index path is not a folder: %s", absoluteRoot)
+	}
+
+	folderID, err := indexer.store.RegisterFolder(ctx, absoluteRoot)
+	if err != nil {
+		return Report{}, err
+	}
+	info, err := os.Lstat(absolutePath)
+	if errors.Is(err, os.ErrNotExist) {
+		removed, deleteErr := indexer.store.DeleteDocumentsAtPath(ctx, folderID, absolutePath)
+		if deleteErr != nil {
+			return Report{}, deleteErr
+		}
+		return Report{Folder: absoluteRoot, Removed: removed, Errors: []FileError{}}, nil
+	}
+	if err != nil {
+		return Report{}, fmt.Errorf("read changed path: %w", err)
+	}
+	if info.IsDir() {
+		return indexer.indexTree(ctx, folderID, absoluteRoot, absolutePath)
+	}
+	return indexer.indexFile(ctx, folderID, absoluteRoot, absolutePath, info)
+}
+
+func (indexer *Indexer) indexTree(ctx context.Context, folderID int64, root string, treeRoot string) (Report, error) {
+	report := Report{Folder: root, Errors: []FileError{}}
+	seen := make(map[string]struct{})
+	incomplete := false
+
+	err := filepath.WalkDir(treeRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			report.Errors = append(report.Errors, FileError{Path: path, Message: walkErr.Error()})
+			incomplete = true
 			return nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -95,57 +163,22 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 		if entry.IsDir() {
 			return nil
 		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			report.Skipped++
-			return nil
-		}
-
-		extension := strings.ToLower(filepath.Ext(entry.Name()))
-		_, isText := supportedExtensions[extension]
-		if !isText && extension != pdfExtension {
-			report.Skipped++
-			return nil
-		}
-		seen[path] = struct{}{}
-
 		fileInfo, err := entry.Info()
 		if err != nil {
 			report.Errors = append(report.Errors, FileError{Path: path, Message: err.Error()})
+			incomplete = true
 			return nil
 		}
-
-		current, err := indexer.store.DocumentIsCurrent(ctx, path, fileInfo.Size(), fileInfo.ModTime().UnixNano())
+		fileReport, err := indexer.indexFile(ctx, folderID, root, path, fileInfo)
 		if err != nil {
 			return err
 		}
-		if current {
-			report.Unchanged++
-			return nil
-		}
-
-		document := storage.Document{
-			FolderID:     folderID,
-			Path:         path,
-			Name:         entry.Name(),
-			Extension:    extension,
-			SizeBytes:    fileInfo.Size(),
-			ModifiedAtNS: fileInfo.ModTime().UnixNano(),
-			Status:       "indexed",
-		}
-
-		document.Content, err = indexer.extractContent(ctx, path, extension, fileInfo.Size())
-		if err != nil {
-			document.Status = "error"
-			document.Error = err.Error()
-		}
-
-		if err := indexer.store.UpsertDocument(ctx, document); err != nil {
-			return err
-		}
-		if document.Status == "error" {
-			report.Errors = append(report.Errors, FileError{Path: path, Message: document.Error})
-		} else {
-			report.Indexed++
+		report.Indexed += fileReport.Indexed
+		report.Unchanged += fileReport.Unchanged
+		report.Skipped += fileReport.Skipped
+		report.Errors = append(report.Errors, fileReport.Errors...)
+		if isSupportedPath(path, fileInfo) {
+			seen[path] = struct{}{}
 		}
 		return nil
 	})
@@ -153,11 +186,69 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 		return Report{}, fmt.Errorf("walk folder: %w", err)
 	}
 
-	report.Removed, err = indexer.store.DeleteMissingDocuments(ctx, folderID, seen)
+	if !incomplete {
+		report.Removed, err = indexer.store.DeleteMissingDocumentsUnder(ctx, folderID, treeRoot, seen)
+		if err != nil {
+			return Report{}, err
+		}
+	}
+	return report, nil
+}
+
+func (indexer *Indexer) indexFile(ctx context.Context, folderID int64, root string, path string, fileInfo fs.FileInfo) (Report, error) {
+	report := Report{Folder: root, Errors: []FileError{}}
+	if fileInfo.Mode()&os.ModeSymlink != 0 || !isSupportedPath(path, fileInfo) {
+		report.Skipped++
+		removed, err := indexer.store.DeleteDocumentsAtPath(ctx, folderID, path)
+		if err != nil {
+			return Report{}, err
+		}
+		report.Removed = removed
+		return report, nil
+	}
+
+	current, err := indexer.store.DocumentIsCurrent(ctx, path, fileInfo.Size(), fileInfo.ModTime().UnixNano())
 	if err != nil {
 		return Report{}, err
 	}
+	if current {
+		report.Unchanged++
+		return report, nil
+	}
+
+	extension := strings.ToLower(filepath.Ext(path))
+	document := storage.Document{
+		FolderID: folderID, Path: path, Name: filepath.Base(path), Extension: extension,
+		SizeBytes: fileInfo.Size(), ModifiedAtNS: fileInfo.ModTime().UnixNano(), Status: "indexed",
+	}
+	document.Content, err = indexer.extractContent(ctx, path, extension, fileInfo.Size())
+	if err != nil {
+		document.Status = "error"
+		document.Error = err.Error()
+	}
+	if err := indexer.store.UpsertDocument(ctx, document); err != nil {
+		return Report{}, err
+	}
+	if document.Status == "error" {
+		report.Errors = append(report.Errors, FileError{Path: path, Message: document.Error})
+	} else {
+		report.Indexed++
+	}
 	return report, nil
+}
+
+func isSupportedPath(path string, info fs.FileInfo) bool {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false
+	}
+	extension := strings.ToLower(filepath.Ext(path))
+	_, isText := supportedExtensions[extension]
+	return isText || extension == pdfExtension
+}
+
+func isWithin(root string, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (indexer *Indexer) extractContent(ctx context.Context, path string, extension string, sizeBytes int64) (string, error) {

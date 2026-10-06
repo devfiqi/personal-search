@@ -2,6 +2,9 @@ package indexer
 
 import (
 	"context"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,14 +32,16 @@ type Manager struct {
 	folders  FolderStore
 	debounce time.Duration
 
-	mutex       sync.RWMutex
-	paused      bool
-	indexing    bool
-	dirty       bool
-	lastIndexed time.Time
-	lastError   string
-	watchError  string
-	watchCount  int
+	mutex        sync.RWMutex
+	paused       bool
+	indexing     bool
+	dirty        bool
+	fullScan     bool
+	changedPaths map[string]struct{}
+	lastIndexed  time.Time
+	lastError    string
+	watchError   string
+	watchCount   int
 
 	scanMutex sync.Mutex
 	wake      chan struct{}
@@ -54,7 +59,8 @@ func NewManager(indexer *Indexer, folders FolderStore) *Manager {
 func newManager(indexer *Indexer, folders FolderStore, debounce time.Duration) *Manager {
 	return &Manager{
 		indexer: indexer, folders: folders, debounce: debounce,
-		wake: make(chan struct{}, 1), reload: make(chan struct{}, 1), done: make(chan struct{}),
+		changedPaths: make(map[string]struct{}),
+		wake:         make(chan struct{}, 1), reload: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 }
 
@@ -92,6 +98,22 @@ func (manager *Manager) Close() {
 func (manager *Manager) RequestScan() {
 	manager.mutex.Lock()
 	manager.dirty = true
+	manager.fullScan = true
+	manager.mutex.Unlock()
+	select {
+	case manager.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (manager *Manager) requestPath(path string) {
+	manager.mutex.Lock()
+	manager.dirty = true
+	if path == "" {
+		manager.fullScan = true
+	} else {
+		manager.changedPaths[filepath.Clean(path)] = struct{}{}
+	}
 	manager.mutex.Unlock()
 	select {
 	case manager.wake <- struct{}{}:
@@ -160,8 +182,11 @@ func (manager *Manager) run(ctx context.Context, watcher folderWatcher) {
 			if err := manager.reloadWatches(ctx, watcher); err != nil {
 				manager.recordError(err)
 			}
-		case <-watcher.Events():
-			manager.RequestScan()
+		case path := <-watcher.Events():
+			if watcher.Overflowed() {
+				path = ""
+			}
+			manager.requestPath(path)
 		case <-timerChannel:
 			timerChannel = nil
 			manager.scan(ctx)
@@ -176,6 +201,13 @@ func (manager *Manager) scan(ctx context.Context) {
 		return
 	}
 	manager.dirty = false
+	fullScan := manager.fullScan
+	changedPaths := make([]string, 0, len(manager.changedPaths))
+	for path := range manager.changedPaths {
+		changedPaths = append(changedPaths, path)
+	}
+	manager.fullScan = false
+	manager.changedPaths = make(map[string]struct{})
 	manager.indexing = true
 	manager.lastError = ""
 	manager.mutex.Unlock()
@@ -194,14 +226,41 @@ func (manager *Manager) scan(ctx context.Context) {
 		manager.recordError(err)
 		return
 	}
-	for _, folder := range folders {
-		if _, err := manager.indexer.IndexFolder(ctx, folder.Path); err != nil {
+	if fullScan {
+		for _, folder := range folders {
+			if _, err := manager.indexer.IndexFolder(ctx, folder.Path); err != nil {
+				manager.recordError(err)
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		return
+	}
+
+	sort.Strings(changedPaths)
+	for _, path := range changedPaths {
+		folder, ok := folderForPath(folders, path)
+		if !ok {
+			continue
+		}
+		if _, err := manager.indexer.IndexPath(ctx, folder.Path, path); err != nil {
 			manager.recordError(err)
 		}
 		if ctx.Err() != nil {
 			return
 		}
 	}
+}
+
+func folderForPath(folders []storage.Folder, path string) (storage.Folder, bool) {
+	for _, folder := range folders {
+		relative, err := filepath.Rel(folder.Path, path)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return folder, true
+		}
+	}
+	return storage.Folder{}, false
 }
 
 func (manager *Manager) reloadWatches(ctx context.Context, watcher folderWatcher) error {

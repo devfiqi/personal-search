@@ -9,7 +9,7 @@ package indexer
 #include <stdint.h>
 #include <stdlib.h>
 
-extern void personalSearchFSEvent(void *info);
+extern void personalSearchFSEvent(void *info, char *path);
 
 static void personalSearchStreamCallback(
 	ConstFSEventStreamRef stream,
@@ -19,11 +19,12 @@ static void personalSearchStreamCallback(
 	const FSEventStreamEventFlags eventFlags[],
 	const FSEventStreamEventId eventIds[]) {
 	(void)stream;
-	(void)numEvents;
-	(void)eventPaths;
 	(void)eventFlags;
 	(void)eventIds;
-	personalSearchFSEvent(info);
+	char **paths = (char **)eventPaths;
+	for (size_t index = 0; index < numEvents; index++) {
+		personalSearchFSEvent(info, paths[index]);
+	}
 }
 
 static FSEventStreamRef personalSearchStartStream(char **paths, int count, uintptr_t info, dispatch_queue_t *queueOut) {
@@ -96,8 +97,9 @@ import (
 var darwinWatchers sync.Map
 
 type darwinWatcher struct {
-	id     uintptr
-	events chan struct{}
+	id       uintptr
+	events   chan string
+	overflow atomic.Bool
 
 	lifecycle sync.Mutex
 	mutex     sync.Mutex
@@ -110,7 +112,7 @@ type darwinWatcher struct {
 func newFolderWatcher() (folderWatcher, error) {
 	watcher := &darwinWatcher{
 		id:     uintptr(atomic.AddUintptr(&nextDarwinWatcherID, 1)),
-		events: make(chan struct{}, 1),
+		events: make(chan string, 256),
 	}
 	darwinWatchers.Store(watcher.id, watcher)
 	return watcher, nil
@@ -119,15 +121,21 @@ func newFolderWatcher() (folderWatcher, error) {
 var nextDarwinWatcherID uintptr
 
 //export personalSearchFSEvent
-func personalSearchFSEvent(info unsafe.Pointer) {
+func personalSearchFSEvent(info unsafe.Pointer, path *C.char) {
 	value, ok := darwinWatchers.Load(uintptr(info))
 	if !ok {
 		return
 	}
-	value.(*darwinWatcher).notify()
+	eventPath := ""
+	if path != nil {
+		eventPath = C.GoString(path)
+	}
+	value.(*darwinWatcher).notify(eventPath)
 }
 
-func (watcher *darwinWatcher) Events() <-chan struct{} { return watcher.events }
+func (watcher *darwinWatcher) Events() <-chan string { return watcher.events }
+
+func (watcher *darwinWatcher) Overflowed() bool { return watcher.overflow.Swap(false) }
 
 func (watcher *darwinWatcher) Replace(paths []string) error {
 	watcher.lifecycle.Lock()
@@ -224,7 +232,7 @@ func (watcher *darwinWatcher) Close() error {
 	return nil
 }
 
-func (watcher *darwinWatcher) notify() {
+func (watcher *darwinWatcher) notify(path string) {
 	watcher.mutex.Lock()
 	closed := watcher.closed
 	watcher.mutex.Unlock()
@@ -232,7 +240,8 @@ func (watcher *darwinWatcher) notify() {
 		return
 	}
 	select {
-	case watcher.events <- struct{}{}:
+	case watcher.events <- path:
 	default:
+		watcher.overflow.Store(true)
 	}
 }

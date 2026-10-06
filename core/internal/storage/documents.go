@@ -163,7 +163,51 @@ ON CONFLICT(path) DO UPDATE SET
 }
 
 func (store *Store) DeleteMissingDocuments(ctx context.Context, folderID int64, seen map[string]struct{}) (int, error) {
-	rows, err := store.database.QueryContext(ctx, "SELECT path FROM documents WHERE folder_id = ?", folderID)
+	return store.deleteMissingDocuments(ctx, folderID, "", seen)
+}
+
+func (store *Store) DeleteMissingDocumentsUnder(ctx context.Context, folderID int64, root string, seen map[string]struct{}) (int, error) {
+	return store.deleteMissingDocuments(ctx, folderID, root, seen)
+}
+
+func (store *Store) DeleteDocumentsForFolder(ctx context.Context, folderPath string) (int, error) {
+	result, err := store.database.ExecContext(ctx, `
+DELETE FROM documents
+WHERE folder_id = (SELECT id FROM folders WHERE path = ?)`, folderPath)
+	if err != nil {
+		return 0, fmt.Errorf("delete unavailable folder documents: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read unavailable folder deletion count: %w", err)
+	}
+	return int(count), nil
+}
+
+func (store *Store) DeleteDocumentsAtPath(ctx context.Context, folderID int64, path string) (int, error) {
+	result, err := store.database.ExecContext(ctx, `
+DELETE FROM documents
+WHERE folder_id = ?
+  AND (path = ? OR (substr(path, 1, length(?)) = ? AND substr(path, length(?) + 1, 1) = '/'))`,
+		folderID, path, path, path, path)
+	if err != nil {
+		return 0, fmt.Errorf("delete missing document path: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read missing document deletion count: %w", err)
+	}
+	return int(count), nil
+}
+
+func (store *Store) deleteMissingDocuments(ctx context.Context, folderID int64, root string, seen map[string]struct{}) (int, error) {
+	query := "SELECT path FROM documents WHERE folder_id = ?"
+	arguments := []any{folderID}
+	if root != "" {
+		query += " AND (path = ? OR (substr(path, 1, length(?)) = ? AND substr(path, length(?) + 1, 1) = '/'))"
+		arguments = append(arguments, root, root, root, root)
+	}
+	rows, err := store.database.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return 0, fmt.Errorf("list indexed documents: %w", err)
 	}
