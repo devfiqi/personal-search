@@ -3,6 +3,7 @@ import sys
 from typing import Any, TextIO
 
 from personal_search_extractor.pdf import PDFExtractionError, extract_pdf
+from personal_search_extractor.semantic import SemanticEmbeddingError, embed
 
 
 def handle(message: dict[str, Any]) -> dict[str, Any]:
@@ -38,6 +39,24 @@ def handle(message: dict[str, Any]) -> dict[str, Any]:
             "ok": True,
             "result": {"text": result.text, "page_count": result.page_count},
         }
+
+    if operation == "embed":
+        texts = message.get("texts")
+        if not isinstance(texts, list) or not all(isinstance(text, str) for text in texts):
+            return {
+                "id": request_id,
+                "ok": False,
+                "error": {"code": "invalid_request", "message": "embed requires text strings"},
+            }
+        try:
+            vectors = embed(texts)
+        except SemanticEmbeddingError as error:
+            return {
+                "id": request_id,
+                "ok": False,
+                "error": {"code": "semantic_unavailable", "message": str(error)},
+            }
+        return {"id": request_id, "ok": True, "result": {"vectors": vectors}}
 
     return {
         "id": request_id,

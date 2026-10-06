@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -55,6 +56,14 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(response["id"], "request-2")
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "unsupported_operation")
+
+    @patch("personal_search_extractor.worker.embed", return_value=[[0.1, 0.2]])
+    def test_embed_returns_local_vector(self, embed_mock: object) -> None:
+        response = handle({"id": "request-embed", "operation": "embed", "texts": ["local search"]})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["result"]["vectors"], [[0.1, 0.2]])
+        embed_mock.assert_called_once_with(["local search"])  # type: ignore[attr-defined]
 
     def test_extract_pdf_returns_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

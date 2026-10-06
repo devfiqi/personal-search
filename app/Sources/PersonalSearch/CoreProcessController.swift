@@ -43,6 +43,15 @@ final class CoreProcessController {
             "--db", support.appendingPathComponent("search.db").path,
             "--socket", socketPath,
         ] + extractorArguments()
+        var environment = ProcessInfo.processInfo.environment
+        if let resources = Bundle.main.resourceURL {
+            let modelCache = resources.appendingPathComponent("Models/FastEmbed")
+            if FileManager.default.fileExists(atPath: modelCache.path) {
+                environment["PERSONAL_SEARCH_EMBEDDING_MODEL_DIR"] = modelCache.path
+                environment["HF_HUB_OFFLINE"] = "1"
+            }
+        }
+        task.environment = environment
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         try task.run()

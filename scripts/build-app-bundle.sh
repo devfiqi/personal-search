@@ -8,6 +8,7 @@ contents="$bundle/Contents"
 resources="$contents/Resources"
 signing_identity=${CODESIGN_IDENTITY:--}
 worker_build="$repository_root/tmp/pyinstaller"
+semantic_model_cache="$repository_root/tmp/embedding-model"
 
 if [[ ! -x "$repository_root/extractor/.venv/bin/pyinstaller" ]]; then
     print -u2 "Run 'make setup-extractor' before building the app bundle"
@@ -16,7 +17,10 @@ fi
 
 rm -rf "$bundle"
 rm -rf "$worker_build"
-mkdir -p "$contents/MacOS" "$resources/Core" "$resources/Extractor" "$worker_build/spec" "$worker_build/work" "$worker_build/dist"
+mkdir -p "$contents/MacOS" "$resources/Core" "$resources/Extractor" "$resources/Models" "$worker_build/spec" "$worker_build/work" "$worker_build/dist"
+
+"$repository_root/scripts/prepare-semantic-model.sh" >/dev/null
+cp -R "$semantic_model_cache" "$resources/Models/FastEmbed"
 
 swift build --package-path "$repository_root/app" -c release
 go build -C "$repository_root/core" -tags sqlite_fts5 -o "$resources/Core/personal-search-core" ./cmd/personal-search-core
