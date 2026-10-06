@@ -92,8 +92,53 @@ CREATE INDEX IF NOT EXISTS semantic_chunks_vector_state ON semantic_chunks(vecto
 CREATE TABLE IF NOT EXISTS gmail_accounts (
     email TEXT PRIMARY KEY,
     client_id TEXT NOT NULL,
+    next_page_token TEXT NOT NULL DEFAULT '',
+    sync_complete INTEGER NOT NULL DEFAULT 0,
     connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS email_messages (
+    id INTEGER PRIMARY KEY,
+    account_email TEXT NOT NULL REFERENCES gmail_accounts(email) ON DELETE CASCADE,
+    gmail_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    recipients TEXT NOT NULL,
+    received_at_ns INTEGER NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(account_email, gmail_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_messages_account_email ON email_messages(account_email);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS email_messages_fts USING fts5(
+    subject,
+    sender,
+    recipients,
+    body,
+    content='email_messages',
+    content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS email_messages_after_insert AFTER INSERT ON email_messages BEGIN
+    INSERT INTO email_messages_fts(rowid, subject, sender, recipients, body)
+    VALUES (new.id, new.subject, new.sender, new.recipients, new.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS email_messages_after_delete AFTER DELETE ON email_messages BEGIN
+    INSERT INTO email_messages_fts(email_messages_fts, rowid, subject, sender, recipients, body)
+    VALUES ('delete', old.id, old.subject, old.sender, old.recipients, old.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS email_messages_after_update AFTER UPDATE ON email_messages BEGIN
+    INSERT INTO email_messages_fts(email_messages_fts, rowid, subject, sender, recipients, body)
+    VALUES ('delete', old.id, old.subject, old.sender, old.recipients, old.body);
+    INSERT INTO email_messages_fts(rowid, subject, sender, recipients, body)
+    VALUES (new.id, new.subject, new.sender, new.recipients, new.body);
+END;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     name,
@@ -126,6 +171,36 @@ PRAGMA user_version = 1;
 
 	if _, err := store.database.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
+	}
+	if err := store.addColumnIfMissing(ctx, "gmail_accounts", "next_page_token", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := store.addColumnIfMissing(ctx, "gmail_accounts", "sync_complete", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (store *Store) addColumnIfMissing(ctx context.Context, table string, column string, definition string) error {
+	rows, err := store.database.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, valueType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &valueType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("read %s schema: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if _, err := store.database.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
 	}
 	return nil
 }

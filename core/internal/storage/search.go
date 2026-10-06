@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -16,6 +18,7 @@ type SearchResult struct {
 	Snippet      string  `json:"snippet"`
 	Score        float64 `json:"score"`
 	MatchType    string  `json:"match_type"`
+	Source       string  `json:"source"`
 }
 
 func (store *Store) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
@@ -96,10 +99,68 @@ LIMIT ?`, match, limit)
 			return nil, fmt.Errorf("read search result: %w", err)
 		}
 		result.MatchType = "keyword"
+		result.Source = "document"
 		results = append(results, result)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate search results: %w", err)
+	}
+	emails, err := store.searchEmailMatch(ctx, match, limit)
+	if err != nil {
+		return nil, err
+	}
+	results = append(results, emails...)
+	sort.SliceStable(results, func(left int, right int) bool {
+		if results[left].Score == results[right].Score {
+			return results[left].ModifiedAtNS > results[right].ModifiedAtNS
+		}
+		return results[left].Score < results[right].Score
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+const emailResultIDOffset int64 = 1 << 60
+
+func (store *Store) searchEmailMatch(ctx context.Context, match string, limit int) ([]SearchResult, error) {
+	rows, err := store.database.QueryContext(ctx, `
+SELECT
+    email_messages.id,
+    email_messages.account_email,
+    email_messages.gmail_id,
+    email_messages.subject,
+    email_messages.received_at_ns,
+    snippet(email_messages_fts, 3, '[', ']', '…', 24),
+    rank
+FROM email_messages_fts
+JOIN email_messages ON email_messages.id = email_messages_fts.rowid
+WHERE email_messages_fts MATCH ?
+  AND email_messages_fts.rank MATCH 'bm25(8.0, 4.0, 2.0, 1.0)'
+ORDER BY rank, email_messages.received_at_ns DESC
+LIMIT ?`, match, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search email: %w", err)
+	}
+	defer rows.Close()
+	results := []SearchResult{}
+	for rows.Next() {
+		var id int64
+		var accountEmail, gmailID string
+		var result SearchResult
+		if err := rows.Scan(&id, &accountEmail, &gmailID, &result.Name, &result.ModifiedAtNS, &result.Snippet, &result.Score); err != nil {
+			return nil, fmt.Errorf("read email search result: %w", err)
+		}
+		result.ID = emailResultIDOffset + id
+		result.Path = "https://mail.google.com/mail/u/" + url.PathEscape(accountEmail) + "/#all/" + url.PathEscape(gmailID)
+		result.Extension = ".eml"
+		result.MatchType = "keyword"
+		result.Source = "email"
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate email search results: %w", err)
 	}
 	return results, nil
 }
