@@ -2,15 +2,10 @@ package indexer
 
 import (
 	"context"
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/devfiqi/personal-search/core/internal/storage"
-	"github.com/fsnotify/fsnotify"
 )
 
 const defaultDebounce = 350 * time.Millisecond
@@ -24,6 +19,7 @@ type ManagerState struct {
 	Indexing     bool      `json:"indexing"`
 	LastIndexed  time.Time `json:"last_indexed,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
+	WatchError   string    `json:"watch_error,omitempty"`
 	PendingScan  bool      `json:"pending_scan"`
 	WatchedPaths int       `json:"watched_paths"`
 }
@@ -39,6 +35,7 @@ type Manager struct {
 	dirty       bool
 	lastIndexed time.Time
 	lastError   string
+	watchError  string
 	watchCount  int
 
 	scanMutex sync.Mutex
@@ -64,20 +61,19 @@ func newManager(indexer *Indexer, folders FolderStore, debounce time.Duration) *
 func (manager *Manager) Start(parent context.Context) error {
 	var startError error
 	manager.startOnce.Do(func() {
-		watcher, err := fsnotify.NewWatcher()
+		watcher, err := newFolderWatcher()
 		if err != nil {
-			startError = fmt.Errorf("start folder watcher: %w", err)
+			startError = err
 			return
 		}
 		ctx, cancel := context.WithCancel(parent)
 		manager.cancel = cancel
+		go manager.run(ctx, watcher)
 		if err := manager.reloadWatches(ctx, watcher); err != nil {
-			watcher.Close()
 			cancel()
 			startError = err
 			return
 		}
-		go manager.run(ctx, watcher)
 		manager.RequestScan()
 	})
 	return startError
@@ -125,11 +121,12 @@ func (manager *Manager) State() ManagerState {
 	defer manager.mutex.RUnlock()
 	return ManagerState{
 		Paused: manager.paused, Indexing: manager.indexing, LastIndexed: manager.lastIndexed,
-		LastError: manager.lastError, PendingScan: manager.dirty, WatchedPaths: manager.watchCount,
+		LastError: manager.lastError, WatchError: manager.watchError, PendingScan: manager.dirty,
+		WatchedPaths: manager.watchCount,
 	}
 }
 
-func (manager *Manager) run(ctx context.Context, watcher *fsnotify.Watcher) {
+func (manager *Manager) run(ctx context.Context, watcher folderWatcher) {
 	defer close(manager.done)
 	defer watcher.Close()
 
@@ -163,20 +160,8 @@ func (manager *Manager) run(ctx context.Context, watcher *fsnotify.Watcher) {
 			if err := manager.reloadWatches(ctx, watcher); err != nil {
 				manager.recordError(err)
 			}
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
-				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					_ = manager.addRecursive(watcher, event.Name)
-				}
-			}
+		case <-watcher.Events():
 			manager.RequestScan()
-		case err, ok := <-watcher.Errors:
-			if ok {
-				manager.recordError(fmt.Errorf("watch folders: %w", err))
-			}
 		case <-timerChannel:
 			timerChannel = nil
 			manager.scan(ctx)
@@ -219,37 +204,25 @@ func (manager *Manager) scan(ctx context.Context) {
 	}
 }
 
-func (manager *Manager) reloadWatches(ctx context.Context, watcher *fsnotify.Watcher) error {
-	for _, watched := range watcher.WatchList() {
-		_ = watcher.Remove(watched)
-	}
+func (manager *Manager) reloadWatches(ctx context.Context, watcher folderWatcher) error {
 	folders, err := manager.folders.ListFolders(ctx)
 	if err != nil {
 		return err
 	}
+	paths := make([]string, 0, len(folders))
 	for _, folder := range folders {
-		if err := manager.addRecursive(watcher, folder.Path); err != nil {
-			manager.recordError(err)
-		}
+		paths = append(paths, folder.Path)
 	}
+	watchError := watcher.Replace(paths)
 	manager.mutex.Lock()
-	manager.watchCount = len(watcher.WatchList())
+	manager.watchCount = watcher.Count()
+	if watchError != nil {
+		manager.watchError = watchError.Error()
+	} else {
+		manager.watchError = ""
+	}
 	manager.mutex.Unlock()
 	return nil
-}
-
-func (manager *Manager) addRecursive(watcher *fsnotify.Watcher, root string) error {
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkError error) error {
-		if walkError != nil {
-			return nil
-		}
-		if entry.IsDir() {
-			if err := watcher.Add(path); err != nil {
-				return fmt.Errorf("watch folder: %w", err)
-			}
-		}
-		return nil
-	})
 }
 
 func (manager *Manager) recordError(err error) {
