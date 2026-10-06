@@ -7,6 +7,19 @@ import (
 	"fmt"
 )
 
+type Folder struct {
+	ID   int64  `json:"id"`
+	Path string `json:"path"`
+}
+
+type Failure struct {
+	ID        int64  `json:"id"`
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Extension string `json:"extension"`
+	Message   string `json:"message"`
+}
+
 type Document struct {
 	FolderID     int64
 	Path         string
@@ -31,6 +44,75 @@ ON CONFLICT(path) DO NOTHING`, path); err != nil {
 		return 0, fmt.Errorf("read folder: %w", err)
 	}
 	return id, nil
+}
+
+func (store *Store) ListFolders(ctx context.Context) ([]Folder, error) {
+	rows, err := store.database.QueryContext(ctx, "SELECT id, path FROM folders ORDER BY path")
+	if err != nil {
+		return nil, fmt.Errorf("list folders: %w", err)
+	}
+	defer rows.Close()
+
+	folders := []Folder{}
+	for rows.Next() {
+		var folder Folder
+		if err := rows.Scan(&folder.ID, &folder.Path); err != nil {
+			return nil, fmt.Errorf("read folder: %w", err)
+		}
+		folders = append(folders, folder)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate folders: %w", err)
+	}
+	return folders, nil
+}
+
+func (store *Store) RemoveFolder(ctx context.Context, path string) (bool, error) {
+	result, err := store.database.ExecContext(ctx, "DELETE FROM folders WHERE path = ?", path)
+	if err != nil {
+		return false, fmt.Errorf("remove folder: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read removed folder count: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (store *Store) Reset(ctx context.Context) error {
+	if _, err := store.database.ExecContext(ctx, "DELETE FROM folders"); err != nil {
+		return fmt.Errorf("reset local index: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) ListFailures(ctx context.Context, limit int) ([]Failure, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := store.database.QueryContext(ctx, `
+SELECT id, path, name, extension, COALESCE(error, '')
+FROM documents
+WHERE status = 'error'
+ORDER BY indexed_at DESC, id DESC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list extraction failures: %w", err)
+	}
+	defer rows.Close()
+
+	failures := []Failure{}
+	for rows.Next() {
+		var failure Failure
+		if err := rows.Scan(&failure.ID, &failure.Path, &failure.Name, &failure.Extension, &failure.Message); err != nil {
+			return nil, fmt.Errorf("read extraction failure: %w", err)
+		}
+		failures = append(failures, failure)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate extraction failures: %w", err)
+	}
+	return failures, nil
 }
 
 func (store *Store) DocumentIsCurrent(ctx context.Context, path string, sizeBytes int64, modifiedAtNS int64) (bool, error) {

@@ -8,12 +8,13 @@ import (
 )
 
 type SearchResult struct {
-	ID        int64   `json:"id"`
-	Path      string  `json:"path"`
-	Name      string  `json:"name"`
-	Extension string  `json:"extension"`
-	Snippet   string  `json:"snippet"`
-	Score     float64 `json:"score"`
+	ID           int64   `json:"id"`
+	Path         string  `json:"path"`
+	Name         string  `json:"name"`
+	Extension    string  `json:"extension"`
+	ModifiedAtNS int64   `json:"modified_at_ns"`
+	Snippet      string  `json:"snippet"`
+	Score        float64 `json:"score"`
 }
 
 func (store *Store) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
@@ -64,6 +65,7 @@ SELECT
     documents.path,
     documents.name,
     documents.extension,
+	documents.modified_at_ns,
     snippet(documents_fts, 2, '[', ']', '…', 24),
     bm25(documents_fts, 8.0, 2.0, 1.0)
 FROM documents_fts
@@ -84,6 +86,7 @@ LIMIT ?`, match, limit)
 			&result.Path,
 			&result.Name,
 			&result.Extension,
+			&result.ModifiedAtNS,
 			&result.Snippet,
 			&result.Score,
 		); err != nil {
