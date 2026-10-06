@@ -67,11 +67,13 @@ SELECT
     documents.extension,
 	documents.modified_at_ns,
     snippet(documents_fts, 2, '[', ']', '…', 24),
-    bm25(documents_fts, 8.0, 2.0, 1.0)
+    rank
 FROM documents_fts
 JOIN documents ON documents.id = documents_fts.rowid
-WHERE documents_fts MATCH ? AND documents.status = 'indexed'
-ORDER BY bm25(documents_fts, 8.0, 2.0, 1.0), documents.modified_at_ns DESC
+WHERE documents_fts MATCH ?
+  AND documents_fts.rank MATCH 'bm25(8.0, 2.0, 1.0)'
+  AND documents.status = 'indexed'
+ORDER BY rank, documents.modified_at_ns DESC
 LIMIT ?`, match, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search documents: %w", err)

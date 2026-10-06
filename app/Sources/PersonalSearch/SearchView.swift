@@ -74,28 +74,6 @@ struct SearchView: View {
                 .help("Clear search")
                 .accessibilityLabel("Clear search")
             }
-            if model.failureCount > 0 {
-                Button {
-                    Task {
-                        await model.loadFailures()
-                        showingFailures = true
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(model.failureCount == 1 ? "1 issue" : "\(model.failureCount) issues")
-                            .font(.caption.weight(.medium))
-                    }
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.quaternary.opacity(0.7), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(model.failureCount) extraction issues")
-                .help("Show documents that could not be read")
-            }
             IndexingStatusView(
                 state: model.indexingState,
                 connected: model.connected,

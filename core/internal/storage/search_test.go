@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -37,6 +38,47 @@ func TestSearchPrefersAllTermsAndFallsBackToPartialMatches(t *testing.T) {
 	}
 	if results[0].Name != "both.md" || results[1].Name != "partial.md" {
 		t.Fatalf("Search() order = %q, %q", results[0].Name, results[1].Name)
+	}
+}
+
+func TestSearchReturnsBroadMatchesWithoutDroppingNameMatches(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	folderID, err := store.RegisterFolder(ctx, "/documents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 250; index++ {
+		name := "document-" + strconv.Itoa(index) + ".txt"
+		if index == 0 {
+			name = "linkedin-notes.txt"
+		}
+		if err := store.UpsertDocument(ctx, Document{
+			FolderID:  folderID,
+			Path:      "/documents/" + name,
+			Name:      name,
+			Extension: ".txt",
+			Content:   "linkedin reference material",
+			Status:    "indexed",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := store.Search(ctx, "linkedin", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 50 {
+		t.Fatalf("Search() returned %d results, want 50", len(results))
+	}
+	if results[0].Name != "linkedin-notes.txt" {
+		t.Fatalf("top result = %q, want filename match first", results[0].Name)
 	}
 }
 
