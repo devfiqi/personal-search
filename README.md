@@ -1,84 +1,69 @@
 # Personal Search
 
-A local search engine for personal data, built as a practical way to learn and implement distributed systems fundamentals.
-
-## Overview
-
-Personal Search is a native desktop search engine designed to make information across a computer easy to retrieve regardless of where it is stored.
-
-The goal is to search across personal data using both exact keyword matching and semantic meaning, allowing queries such as:
-
-- `notes about replication lag`
-- `the document where I mentioned Flink`
-- `screenshots containing my offer details`
-- `photos from a specific trip`
-- `emails about an upcoming event`
-
-The system is intended to support multiple data sources, including:
-
-- Local files
-- Documents
-- Source code
-- PDFs
-- Screenshots
-- Photos
-- Email
-- Browser data
-- Additional personal data sources
-
-All personal data and indexes are designed to remain on-device.
-
-The long-term goal is to evolve the project into a distributed search system inspired by concepts from *Designing Data-Intensive Applications*.
-
-The final system is expected to support:
-
-- Keyword and semantic search
-- Search across text, images, and other personal data
-- Automatic indexing as files and data change
-- Multiple workers processing data in parallel
-- Search data split across multiple nodes
-- Replicated copies of search data
-- Search across multiple nodes at once
-- Recovery when a worker or node fails
-- Safe retries when work is interrupted
-- Rebuilding indexes without taking search offline
-- Local-first privacy
-
-The purpose of the project is not only to build a useful personal search engine, but also to provide a real system for practicing distributed systems concepts such as replication, partitioning, consistency, coordination, and fault tolerance.
-
-## Motivation
-
-Computers accumulate large amounts of useful information across files, screenshots, documents, code, photos, email, downloads, and other sources.
-
-Finding that information often requires remembering where something was saved, what it was called, or which application contained it.
-
-Personal Search approaches the problem differently:
+A fully local macOS application for finding personal documents by searching their contents.
 
 > Search for what you remember, not where you stored it.
 
-Instead of relying mainly on filenames and folders, the system makes personal data searchable by its actual content and meaning.
+## Overview
 
-The project also gives distributed systems concepts a real purpose. As the amount of indexed data grows, the system can evolve to split work across multiple processes, keep copies of important data, recover from failures, and search large indexes efficiently.
+Personal Search indexes documents from folders you explicitly select and makes their contents searchable through a minimal native interface.
+
+All documents, extracted text, indexes, and queries remain on-device. The application does not use cloud processing, remote storage, telemetry, or external search services.
+
+## Version 1
+
+The first release will support:
+
+- Plain-text files
+- Markdown files
+- Source-code files
+- Text-based PDFs
+- Keyword search
+- User-selected folders
+- Background indexing while the application runs
+- A floating native macOS search panel
+- Opening results in their default applications
+
+Photos, screenshots, video, email, OCR, and semantic search are planned as possible later phases and are not part of the first release.
+
+## Experience
+
+```text
+Select folders → index documents → search contents → open a result
+```
+
+Search results show the document name, type, path, modified date, and a snippet containing the matching terms.
+
+Queries run against a local index instead of scanning every document at search time.
 
 ## Architecture
 
-```text
-personal-search/
-├── gateway/
-├── indexer/
-├── search-node/
-├── coordinator/
-├── worker/
-├── ui/
-├── shared/
-└── docs/
-```
+Personal Search uses:
 
-- `gateway` — entry point between the desktop app and the search system
-- `indexer` — discovers data and prepares it for search
-- `search-node` — stores and searches indexed data
-- `coordinator` — manages work across multiple search nodes
-- `worker` — handles background processing
-- `ui` — native desktop application
-- `shared` — common types and utilities
-- `docs` — architecture notes and project documentation
+- SwiftUI for the macOS interface
+- Go for indexing, keyword search, and application orchestration
+- Python for document extraction and future machine-learning workloads
+- SQLite with FTS5 for local storage and full-text search
+
+The first release is a modular application running entirely on one computer. It does not require separate servers or cloud infrastructure.
+
+Future distributed-systems experiments may split work across multiple local processes while preserving the on-device privacy boundary.
+
+## Privacy
+
+Original documents remain in their existing locations and are never copied into the application database.
+
+Removing an indexed folder deletes its derived search data without modifying the original files.
+
+See [Privacy and Data Handling](docs/PRIVACY.md) for the complete policy.
+
+## Documentation
+
+- [Product Requirements](docs/PRODUCT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Privacy and Data Handling](docs/PRIVACY.md)
+- [Version 1 Build Plan](docs/V1_PLAN.md)
+
+## Status
+
+The project is in the architecture and initial implementation phase.
