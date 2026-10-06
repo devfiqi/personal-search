@@ -1,0 +1,16 @@
+.DS_Store
+
+# Go
+core/bin/
+core/coverage.out
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Swift
+app/.build/
+app/.swiftpm/
+
