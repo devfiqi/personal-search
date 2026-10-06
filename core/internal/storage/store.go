@@ -74,6 +74,21 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS documents_folder_id ON documents(folder_id);
 
+CREATE TABLE IF NOT EXISTS semantic_chunks (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL,
+    end_byte INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    vector_state TEXT NOT NULL CHECK (vector_state IN ('pending', 'indexed', 'error')) DEFAULT 'pending',
+    vector_error TEXT,
+    UNIQUE(document_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS semantic_chunks_document_id ON semantic_chunks(document_id);
+CREATE INDEX IF NOT EXISTS semantic_chunks_vector_state ON semantic_chunks(vector_state);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     name,
     path,

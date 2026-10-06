@@ -32,6 +32,7 @@ type Store interface {
 	RegisterFolder(ctx context.Context, path string) (int64, error)
 	DocumentIsCurrent(ctx context.Context, path string, sizeBytes int64, modifiedAtNS int64) (bool, error)
 	UpsertDocument(ctx context.Context, document storage.Document) error
+	EnsureDocumentChunks(ctx context.Context, path string) error
 	DeleteMissingDocuments(ctx context.Context, folderID int64, seen map[string]struct{}) (int, error)
 	DeleteMissingDocumentsUnder(ctx context.Context, folderID int64, root string, seen map[string]struct{}) (int, error)
 	DeleteDocumentsForFolder(ctx context.Context, folderPath string) (int, error)
@@ -212,6 +213,9 @@ func (indexer *Indexer) indexFile(ctx context.Context, folderID int64, root stri
 		return Report{}, err
 	}
 	if current {
+		if err := indexer.store.EnsureDocumentChunks(ctx, path); err != nil {
+			return Report{}, err
+		}
 		report.Unchanged++
 		return report, nil
 	}
@@ -227,6 +231,9 @@ func (indexer *Indexer) indexFile(ctx context.Context, folderID int64, root stri
 		document.Error = err.Error()
 	}
 	if err := indexer.store.UpsertDocument(ctx, document); err != nil {
+		return Report{}, err
+	}
+	if err := indexer.store.EnsureDocumentChunks(ctx, path); err != nil {
 		return Report{}, err
 	}
 	if document.Status == "error" {

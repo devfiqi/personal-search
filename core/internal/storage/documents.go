@@ -2,9 +2,13 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+
+	"github.com/devfiqi/personal-search/core/internal/semantic"
 )
 
 type Folder struct {
@@ -30,6 +34,62 @@ type Document struct {
 	Content      string
 	Status       string
 	Error        string
+}
+
+// EnsureDocumentChunks creates stable passage boundaries for semantic indexing.
+// The passage text remains in documents.content; only offsets and a content hash
+// are stored here so the semantic index can be rebuilt locally without another
+// copy of personal content.
+func (store *Store) EnsureDocumentChunks(ctx context.Context, path string) error {
+	var documentID int64
+	var content string
+	var status string
+	err := store.database.QueryRowContext(ctx, `
+SELECT id, content, status FROM documents WHERE path = ?`, path).Scan(&documentID, &content, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read document for semantic chunks: %w", err)
+	}
+	if status != "indexed" || content == "" {
+		if _, err := store.database.ExecContext(ctx, "DELETE FROM semantic_chunks WHERE document_id = ?", documentID); err != nil {
+			return fmt.Errorf("clear semantic chunks: %w", err)
+		}
+		return nil
+	}
+
+	contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	chunks := semantic.Split(content)
+	var existingCount int
+	var existingHash string
+	if err := store.database.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(MIN(content_hash), '') FROM semantic_chunks WHERE document_id = ?`, documentID).Scan(&existingCount, &existingHash); err != nil {
+		return fmt.Errorf("read semantic chunk state: %w", err)
+	}
+	if existingCount == len(chunks) && existingHash == contentHash {
+		return nil
+	}
+
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin semantic chunk update: %w", err)
+	}
+	defer transaction.Rollback()
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM semantic_chunks WHERE document_id = ?", documentID); err != nil {
+		return fmt.Errorf("clear stale semantic chunks: %w", err)
+	}
+	for _, chunk := range chunks {
+		if _, err := transaction.ExecContext(ctx, `
+INSERT INTO semantic_chunks(document_id, ordinal, start_byte, end_byte, content_hash)
+VALUES (?, ?, ?, ?, ?)`, documentID, chunk.Ordinal, chunk.StartByte, chunk.EndByte, contentHash); err != nil {
+			return fmt.Errorf("store semantic chunk "+strconv.Itoa(chunk.Ordinal)+": %w", err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit semantic chunk update: %w", err)
+	}
+	return nil
 }
 
 func (store *Store) RegisterFolder(ctx context.Context, path string) (int64, error) {
