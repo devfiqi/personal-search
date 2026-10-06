@@ -41,6 +41,7 @@ struct IndexingState: Codable, Equatable {
     var indexing = false
     var lastIndexed: String?
     var lastError: String?
+    var watchError: String?
     var pendingScan = false
     var watchedPaths = 0
 
@@ -48,6 +49,7 @@ struct IndexingState: Codable, Equatable {
         case paused, indexing
         case lastIndexed = "last_indexed"
         case lastError = "last_error"
+        case watchError = "watch_error"
         case pendingScan = "pending_scan"
         case watchedPaths = "watched_paths"
     }

@@ -11,7 +11,8 @@ final class SearchViewModel: ObservableObject {
     @Published var failureCount = 0
     @Published var connected = false
     @Published var searching = false
-    @Published var errorMessage: String?
+    @Published var startupError: String?
+    @Published var notice: String?
 
     private var client: CoreClient?
     private var searchTask: Task<Void, Never>?
@@ -19,9 +20,14 @@ final class SearchViewModel: ObservableObject {
     private var started = false
 
     func start() async {
-        if started && connected { return }
+        guard AppInstance.isPrimary else { return }
+        if started && connected {
+            startupError = nil
+            await refreshState()
+            return
+        }
         started = true
-        errorMessage = nil
+        startupError = nil
         do {
             try CoreProcessController.shared.start()
             let client = CoreClient(socketPath: CoreProcessController.shared.socketPath)
@@ -32,7 +38,7 @@ final class SearchViewModel: ObservableObject {
             startPolling()
         } catch {
             connected = false
-            errorMessage = error.localizedDescription
+            startupError = error.localizedDescription
         }
     }
 
@@ -68,9 +74,9 @@ final class SearchViewModel: ObservableObject {
         guard let client else { return }
         do {
             let _: AddFolderResult = try await client.request("add_folder", params: ["path": path])
-            errorMessage = nil
+            notice = nil
             await refreshState()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { notice = error.localizedDescription }
     }
 
     func removeFolder(_ folder: IndexedFolder) async {
@@ -79,14 +85,17 @@ final class SearchViewModel: ObservableObject {
             let _: RemoveFolderResult = try await client.request("remove_folder", params: ["path": folder.path])
             results = []
             query = ""
+            notice = nil
             await refreshState()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { notice = error.localizedDescription }
     }
 
     func setPaused(_ paused: Bool) async {
         guard let client else { return }
-        do { indexingState = try await client.request(paused ? "pause" : "resume") }
-        catch { errorMessage = error.localizedDescription }
+        do {
+            indexingState = try await client.request(paused ? "pause" : "resume")
+            notice = nil
+        } catch { notice = error.localizedDescription }
     }
 
     func reset() async {
@@ -96,14 +105,15 @@ final class SearchViewModel: ObservableObject {
             query = ""
             results = []
             failures = []
+            notice = nil
             await refreshState()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { notice = error.localizedDescription }
     }
 
     func loadFailures() async {
         guard let client else { return }
         do { failures = try await client.request("failures") }
-        catch { errorMessage = error.localizedDescription }
+        catch { notice = error.localizedDescription }
     }
 
     func openTopResult() {
@@ -121,10 +131,10 @@ final class SearchViewModel: ObservableObject {
             let found: [SearchResult] = try await client.request("search", params: ["query": text, "limit": 50])
             guard text == query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
             results = found
-            errorMessage = nil
+            notice = nil
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = error.localizedDescription
+            notice = error.localizedDescription
         }
         searching = false
     }
@@ -137,10 +147,10 @@ final class SearchViewModel: ObservableObject {
             folders = state.folders
             failureCount = state.failureCount
             connected = true
-            if errorMessage?.contains("local search service") == true { errorMessage = nil }
+            startupError = nil
         } catch {
             connected = false
-            errorMessage = error.localizedDescription
+            startupError = error.localizedDescription
         }
     }
 

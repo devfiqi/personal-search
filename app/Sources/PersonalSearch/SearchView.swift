@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SearchView: View {
     @EnvironmentObject private var model: SearchViewModel
+    @ObservedObject private var hotKeys = HotKeyManager.shared
     @FocusState private var searchFocused: Bool
     @State private var showingFolders = false
     @State private var showingFailures = false
@@ -11,19 +12,26 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchBar
+            if hotKeys.registrationFailed {
+                Text("The global shortcut is already used by macOS. Choose another one in Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
+            }
+            if let notice = model.notice {
+                NoticeBanner(message: notice) { model.notice = nil }
+            }
             Divider().opacity(0.55)
             content
         }
         .frame(width: 720, height: 540)
         .background(.ultraThinMaterial)
-        .onAppear { searchFocused = true }
-        .onKeyPress(.escape) {
-            NSApp.keyWindow?.orderOut(nil)
-            return .handled
-        }
-        .onKeyPress(.return) {
-            model.openTopResult()
-            return model.results.isEmpty ? .ignored : .handled
+        .background(SearchWindowAnchor { model.openTopResult() })
+        .onAppear {
+            searchFocused = true
+            hotKeys.registerSavedShortcut()
         }
         .sheet(isPresented: $showingFolders) {
             FolderManagementView().environmentObject(model)
@@ -66,7 +74,33 @@ struct SearchView: View {
                 .help("Clear search")
                 .accessibilityLabel("Clear search")
             }
-            IndexingStatusView(state: model.indexingState, connected: model.connected)
+            if model.failureCount > 0 {
+                Button {
+                    Task {
+                        await model.loadFailures()
+                        showingFailures = true
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(model.failureCount == 1 ? "1 issue" : "\(model.failureCount) issues")
+                            .font(.caption.weight(.medium))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.quaternary.opacity(0.7), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(model.failureCount) extraction issues")
+                .help("Show documents that could not be read")
+            }
+            IndexingStatusView(
+                state: model.indexingState,
+                connected: model.connected,
+                hasFolders: !model.folders.isEmpty
+            )
             optionsMenu
         }
         .padding(.horizontal, 20)
@@ -109,7 +143,7 @@ struct SearchView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let message = model.errorMessage {
+        if let message = model.startupError {
             MessageStateView(
                 icon: "exclamationmark.triangle",
                 title: "Personal Search needs attention",
@@ -154,9 +188,39 @@ struct SearchView: View {
     }
 }
 
+private struct NoticeBanner: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption.weight(.semibold))
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(3)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss notice")
+        }
+        .foregroundStyle(.orange)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct IndexingStatusView: View {
     let state: IndexingState
     let connected: Bool
+    let hasFolders: Bool
 
     var body: some View {
         HStack(spacing: 6) {
@@ -165,7 +229,7 @@ private struct IndexingStatusView: View {
             } else {
                 Image(systemName: icon)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(state.paused ? .orange : .green)
+                    .foregroundStyle(tint)
             }
             Text(label).font(.caption.weight(.medium)).foregroundStyle(.secondary)
         }
@@ -173,16 +237,28 @@ private struct IndexingStatusView: View {
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.7), in: Capsule())
         .accessibilityLabel(label)
+        .help(state.watchError?.isEmpty == false ? state.watchError ?? label : label)
     }
 
     private var label: String {
         if !connected { return "Starting" }
         if state.paused { return "Paused" }
         if state.indexing { return "Indexing" }
+        if hasFolders && state.watchedPaths == 0 { return "Not watching" }
         return "Ready"
     }
 
-    private var icon: String { connected ? (state.paused ? "pause.fill" : "checkmark") : "clock" }
+    private var icon: String {
+        if !connected { return "clock" }
+        if state.paused { return "pause.fill" }
+        if hasFolders && state.watchedPaths == 0 { return "eye.slash" }
+        return "checkmark"
+    }
+
+    private var tint: Color {
+        if state.paused || (hasFolders && state.watchedPaths == 0 && !state.indexing) { return .orange }
+        return .green
+    }
 }
 
 private struct ResultRow: View {

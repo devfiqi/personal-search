@@ -27,10 +27,12 @@ enum SearchShortcut: String, CaseIterable, Identifiable {
 }
 
 @MainActor
-final class HotKeyManager {
+final class HotKeyManager: ObservableObject {
     static let shared = HotKeyManager()
+    @Published private(set) var registrationFailed = false
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
+    private var current: SearchShortcut?
 
     private init() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -38,8 +40,7 @@ final class HotKeyManager {
             GetApplicationEventTarget(),
             { _, _, _ in
                 Task { @MainActor in
-                    NSApp.activate(ignoringOtherApps: true)
-                    NSApp.windows.first(where: { !($0 is NSPanel) })?.makeKeyAndOrderFront(nil)
+                    SearchWindow.show()
                 }
                 return noErr
             },
@@ -51,29 +52,58 @@ final class HotKeyManager {
     }
 
     func registerSavedShortcut() {
-        let raw = UserDefaults.standard.string(forKey: "searchShortcut") ?? SearchShortcut.commandShiftSpace.rawValue
-        register(SearchShortcut(rawValue: raw) ?? .commandShiftSpace)
+        if let saved = UserDefaults.standard.string(forKey: "searchShortcut") {
+            register(SearchShortcut(rawValue: saved) ?? .commandShiftSpace)
+            return
+        }
+        for shortcut in SearchShortcut.allCases where register(shortcut) {
+            UserDefaults.standard.set(shortcut.rawValue, forKey: "searchShortcut")
+            return
+        }
     }
 
-    func register(_ shortcut: SearchShortcut) {
-        if let hotKey {
-            UnregisterEventHotKey(hotKey)
-            self.hotKey = nil
+    @discardableResult
+    func register(_ shortcut: SearchShortcut) -> Bool {
+        if current == shortcut, hotKey != nil, !registrationFailed {
+            return true
         }
-        let identifier = EventHotKeyID(signature: OSType(0x50535243), id: 1)
-        RegisterEventHotKey(
+        let previous = current
+        let previousHotKey = hotKey
+        if let previousHotKey {
+            UnregisterEventHotKey(previousHotKey)
+            hotKey = nil
+        }
+        if install(shortcut) {
+            current = shortcut
+            registrationFailed = false
+            return true
+        }
+        if let previous, install(previous) {
+            current = previous
+        }
+        registrationFailed = true
+        return false
+    }
+
+    private func install(_ shortcut: SearchShortcut) -> Bool {
+        var registered: EventHotKeyRef?
+        let status = RegisterEventHotKey(
             UInt32(kVK_Space),
             shortcut.modifiers,
-            identifier,
+            EventHotKeyID(signature: OSType(0x50535243), id: 1),
             GetApplicationEventTarget(),
             0,
-            &hotKey
+            &registered
         )
+        guard status == noErr else { return false }
+        hotKey = registered
+        return true
     }
 }
 
 struct ShortcutSettingsView: View {
     @AppStorage("searchShortcut") private var shortcut = SearchShortcut.commandShiftSpace.rawValue
+    @ObservedObject private var hotKeys = HotKeyManager.shared
 
     var body: some View {
         Form {
@@ -85,9 +115,14 @@ struct ShortcutSettingsView: View {
             Text("The shortcut opens the search panel from any application.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if hotKeys.registrationFailed {
+                Text("macOS is already using this shortcut. Choose another one.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 180)
+        .frame(width: 440, height: 220)
         .onChange(of: shortcut) { _, newValue in
             if let value = SearchShortcut(rawValue: newValue) { HotKeyManager.shared.register(value) }
         }

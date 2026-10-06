@@ -5,21 +5,36 @@ import Foundation
 final class CoreProcessController {
     static let shared = CoreProcessController()
 
-    let socketPath = "/tmp/personal-search-\(getuid()).sock"
+    var socketPath: String {
+        if let override = ProcessInfo.processInfo.environment["PERSONAL_SEARCH_SOCKET"], !override.isEmpty {
+            return override
+        }
+        return "/tmp/personal-search-\(getuid()).sock"
+    }
     private var process: Process?
 
     private init() {}
 
+    static func supportDirectory() throws -> URL {
+        let fileManager = FileManager.default
+        let support: URL
+        if let override = ProcessInfo.processInfo.environment["PERSONAL_SEARCH_SUPPORT"], !override.isEmpty {
+            support = URL(fileURLWithPath: override, isDirectory: true)
+        } else {
+            support = try fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            ).appendingPathComponent("PersonalSearch", isDirectory: true)
+        }
+        try fileManager.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        return support
+    }
+
     func start() throws {
         if process?.isRunning == true { return }
-        let fileManager = FileManager.default
-        let support = try fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ).appendingPathComponent("PersonalSearch", isDirectory: true)
-        try fileManager.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let support = try Self.supportDirectory()
 
         let task = Process()
         task.executableURL = try locateCore()
