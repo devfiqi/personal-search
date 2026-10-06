@@ -1,4 +1,5 @@
 .DS_Store
+tmp/
 
 # Go
 core/bin/
@@ -9,8 +10,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+*.egg-info/
 
 # Swift
 app/.build/
 app/.swiftpm/
-

@@ -1,10 +1,15 @@
 GO_TAGS := sqlite_fts5
+PYTHON ?= python3
 
-.PHONY: build test build-app build-core test-core test-extractor
+.PHONY: build test setup-extractor build-app build-core test-core test-extractor
 
 build: build-core build-app
 
 test: test-core test-extractor
+
+setup-extractor:
+	python3 -m venv extractor/.venv
+	extractor/.venv/bin/python -m pip install -e extractor
 
 build-app:
 	swift build --package-path app
@@ -16,4 +21,4 @@ test-core:
 	cd core && go test -tags $(GO_TAGS) ./...
 
 test-extractor:
-	cd extractor && PYTHONPATH=src python3 -m unittest discover -s tests -v
+	PYTHONPATH=extractor/src $(PYTHON) -m unittest discover -s extractor/tests -v

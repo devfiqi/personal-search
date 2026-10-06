@@ -9,10 +9,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/devfiqi/personal-search/core/internal/extractor"
 	"github.com/devfiqi/personal-search/core/internal/storage"
 )
 
 const MaxTextFileBytes int64 = 10 * 1024 * 1024
+const MaxPDFFileBytes int64 = 250 * 1024 * 1024
 
 var supportedExtensions = map[string]struct{}{
 	".c": {}, ".cc": {}, ".cpp": {}, ".css": {}, ".go": {}, ".h": {},
@@ -23,6 +25,8 @@ var supportedExtensions = map[string]struct{}{
 	".yaml": {}, ".yml": {}, ".zsh": {},
 }
 
+const pdfExtension = ".pdf"
+
 type Store interface {
 	RegisterFolder(ctx context.Context, path string) (int64, error)
 	DocumentIsCurrent(ctx context.Context, path string, sizeBytes int64, modifiedAtNS int64) (bool, error)
@@ -31,7 +35,12 @@ type Store interface {
 }
 
 type Indexer struct {
-	store Store
+	store        Store
+	pdfExtractor PDFExtractor
+}
+
+type PDFExtractor interface {
+	ExtractPDF(ctx context.Context, path string) (extractor.PDFResult, error)
 }
 
 type FileError struct {
@@ -48,8 +57,8 @@ type Report struct {
 	Errors    []FileError `json:"errors"`
 }
 
-func New(store Store) *Indexer {
-	return &Indexer{store: store}
+func New(store Store, pdfExtractor PDFExtractor) *Indexer {
+	return &Indexer{store: store, pdfExtractor: pdfExtractor}
 }
 
 func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, error) {
@@ -92,7 +101,8 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 		}
 
 		extension := strings.ToLower(filepath.Ext(entry.Name()))
-		if _, ok := supportedExtensions[extension]; !ok {
+		_, isText := supportedExtensions[extension]
+		if !isText && extension != pdfExtension {
 			report.Skipped++
 			return nil
 		}
@@ -123,21 +133,10 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 			Status:       "indexed",
 		}
 
-		if fileInfo.Size() > MaxTextFileBytes {
+		document.Content, err = indexer.extractContent(ctx, path, extension, fileInfo.Size())
+		if err != nil {
 			document.Status = "error"
-			document.Error = "file exceeds text indexing limit"
-		} else {
-			content, err := os.ReadFile(path)
-			switch {
-			case err != nil:
-				document.Status = "error"
-				document.Error = err.Error()
-			case !utf8.Valid(content):
-				document.Status = "error"
-				document.Error = "file is not valid UTF-8"
-			default:
-				document.Content = string(content)
-			}
+			document.Error = err.Error()
 		}
 
 		if err := indexer.store.UpsertDocument(ctx, document); err != nil {
@@ -159,4 +158,32 @@ func (indexer *Indexer) IndexFolder(ctx context.Context, root string) (Report, e
 		return Report{}, err
 	}
 	return report, nil
+}
+
+func (indexer *Indexer) extractContent(ctx context.Context, path string, extension string, sizeBytes int64) (string, error) {
+	if extension == pdfExtension {
+		if sizeBytes > MaxPDFFileBytes {
+			return "", fmt.Errorf("PDF exceeds extraction limit")
+		}
+		if indexer.pdfExtractor == nil {
+			return "", fmt.Errorf("PDF extractor is unavailable")
+		}
+		result, err := indexer.pdfExtractor.ExtractPDF(ctx, path)
+		if err != nil {
+			return "", err
+		}
+		return result.Text, nil
+	}
+
+	if sizeBytes > MaxTextFileBytes {
+		return "", fmt.Errorf("file exceeds text indexing limit")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(content) {
+		return "", fmt.Errorf("file is not valid UTF-8")
+	}
+	return string(content), nil
 }
