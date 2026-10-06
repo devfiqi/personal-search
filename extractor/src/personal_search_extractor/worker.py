@@ -4,6 +4,7 @@ from typing import Any, TextIO
 
 from personal_search_extractor.pdf import PDFExtractionError, extract_pdf
 from personal_search_extractor.semantic import SemanticEmbeddingError, embed
+from personal_search_extractor.vector_index import VectorIndexError, local_index
 
 
 def handle(message: dict[str, Any]) -> dict[str, Any]:
@@ -57,6 +58,30 @@ def handle(message: dict[str, Any]) -> dict[str, Any]:
                 "error": {"code": "semantic_unavailable", "message": str(error)},
             }
         return {"id": request_id, "ok": True, "result": {"vectors": vectors}}
+
+    if operation == "index_vectors":
+        identifiers = message.get("ids")
+        vectors = message.get("vectors")
+        if not isinstance(identifiers, list) or not all(isinstance(value, int) for value in identifiers):
+            return {"id": request_id, "ok": False, "error": {"code": "invalid_request", "message": "index_vectors requires integer IDs"}}
+        if not isinstance(vectors, list):
+            return {"id": request_id, "ok": False, "error": {"code": "invalid_request", "message": "index_vectors requires vectors"}}
+        try:
+            local_index().upsert(identifiers, vectors)
+        except VectorIndexError as error:
+            return {"id": request_id, "ok": False, "error": {"code": "semantic_index_error", "message": str(error)}}
+        return {"id": request_id, "ok": True, "result": {"indexed": len(identifiers)}}
+
+    if operation == "search_vectors":
+        vector = message.get("vector")
+        limit = message.get("limit")
+        if not isinstance(vector, list) or not isinstance(limit, int):
+            return {"id": request_id, "ok": False, "error": {"code": "invalid_request", "message": "search_vectors requires a vector and limit"}}
+        try:
+            matches = local_index().search(vector, limit)
+        except VectorIndexError as error:
+            return {"id": request_id, "ok": False, "error": {"code": "semantic_index_error", "message": str(error)}}
+        return {"id": request_id, "ok": True, "result": {"matches": [{"id": chunk_id, "distance": distance} for chunk_id, distance in matches]}}
 
     return {
         "id": request_id,

@@ -9,6 +9,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from personal_search_extractor.pdf import PDFExtractionError, extract_pdf
+from personal_search_extractor.vector_index import VectorIndex
 from personal_search_extractor.worker import handle, run
 
 
@@ -64,6 +65,17 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["result"]["vectors"], [[0.1, 0.2]])
         embed_mock.assert_called_once_with(["local search"])  # type: ignore[attr-defined]
+
+    def test_vector_index_persists_and_searches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "semantic.hnsw")
+            vectors = [[0.0, 1.0] + [0.0] * 382, [1.0] + [0.0] * 383]
+            index = VectorIndex(path)
+            index.upsert([4, 7], vectors)
+            self.assertEqual(index.search([1.0] + [0.0] * 383, 1)[0][0], 7)
+
+            restored = VectorIndex(path)
+            self.assertEqual(restored.search([1.0] + [0.0] * 383, 1)[0][0], 7)
 
     def test_extract_pdf_returns_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

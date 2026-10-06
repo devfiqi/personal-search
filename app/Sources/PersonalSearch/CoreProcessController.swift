@@ -51,6 +51,7 @@ final class CoreProcessController {
                 environment["HF_HUB_OFFLINE"] = "1"
             }
         }
+        environment["PERSONAL_SEARCH_SEMANTIC_INDEX_PATH"] = support.appendingPathComponent("semantic.hnsw").path
         task.environment = environment
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
