@@ -64,16 +64,21 @@ func (service *Service) Sync(ctx context.Context) (int, error) {
 // Run incrementally catches up on new and existing passages without holding up
 // file watching or keyword indexing. A failed batch remains pending for retry.
 func (service *Service) Run(ctx context.Context) {
-	ticker := time.NewTicker(750 * time.Millisecond)
-	defer ticker.Stop()
 	for {
-		if _, err := service.Sync(ctx); err != nil && ctx.Err() != nil {
+		indexed, err := service.Sync(ctx)
+		if err != nil && ctx.Err() != nil {
 			return
 		}
+		delay := 750 * time.Millisecond
+		if indexed > 0 {
+			delay = 50 * time.Millisecond
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
