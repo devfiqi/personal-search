@@ -43,12 +43,21 @@ type Server struct {
 	socketPath string
 	store      *storage.Store
 	manager    *indexer.Manager
+	searcher   Searcher
 	listener   net.Listener
 	closeOnce  sync.Once
 }
 
+type Searcher interface {
+	Search(ctx context.Context, query string, limit int) ([]storage.SearchResult, error)
+}
+
 func New(socketPath string, store *storage.Store, manager *indexer.Manager) *Server {
-	return &Server{socketPath: socketPath, store: store, manager: manager}
+	return NewWithSearcher(socketPath, store, manager, store)
+}
+
+func NewWithSearcher(socketPath string, store *storage.Store, manager *indexer.Manager, searcher Searcher) *Server {
+	return &Server{socketPath: socketPath, store: store, manager: manager, searcher: searcher}
 }
 
 func (server *Server) Serve(ctx context.Context) error {
@@ -186,7 +195,7 @@ func (server *Server) handle(ctx context.Context, request Request) Response {
 		if err := decodeParams(request.Params, &params); err != nil {
 			return failure(request.ID, "invalid_request", "Search parameters are invalid")
 		}
-		results, err := server.store.Search(ctx, params.Query, params.Limit)
+		results, err := server.searcher.Search(ctx, params.Query, params.Limit)
 		if err != nil {
 			return internalFailure(request.ID, err)
 		}

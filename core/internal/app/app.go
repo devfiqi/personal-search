@@ -16,6 +16,8 @@ import (
 	"github.com/devfiqi/personal-search/core/internal/extractor"
 	"github.com/devfiqi/personal-search/core/internal/indexer"
 	"github.com/devfiqi/personal-search/core/internal/localapi"
+	"github.com/devfiqi/personal-search/core/internal/search"
+	"github.com/devfiqi/personal-search/core/internal/semanticindex"
 	"github.com/devfiqi/personal-search/core/internal/storage"
 )
 
@@ -68,15 +70,18 @@ func runServe(args []string, errorsOutput io.Writer) error {
 	worker := newExtractor(*extractorExecutable, *pythonExecutable, absoluteExtractorSource, *extractionTimeout)
 	defer worker.Close()
 	manager := indexer.NewManager(indexer.New(store, worker), store)
+	semantic := semanticindex.New(store, worker)
+	searcher := search.New(store, semantic)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, stopParent := cancelWhenParentExits(ctx)
 	defer stopParent()
+	go semantic.Run(ctx)
 	if err := manager.Start(ctx); err != nil {
 		return err
 	}
 	defer manager.Close()
-	return localapi.New(*socketPath, store, manager).Serve(ctx)
+	return localapi.NewWithSearcher(*socketPath, store, manager, searcher).Serve(ctx)
 }
 
 func runInit(args []string, output io.Writer, errorsOutput io.Writer) error {
