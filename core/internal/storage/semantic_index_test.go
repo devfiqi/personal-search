@@ -40,6 +40,10 @@ func TestSemanticChunksCanBeReadAndMarkedIndexed(t *testing.T) {
 	if len(pending) != 1 || pending[0].Text != document.Content {
 		t.Fatalf("pending semantic chunks = %+v", pending)
 	}
+	count, err := store.PendingSemanticChunkCount(ctx)
+	if err != nil || count != 1 {
+		t.Fatalf("PendingSemanticChunkCount() = %d, %v", count, err)
+	}
 	if err := store.MarkSemanticChunksIndexed(ctx, []int64{pending[0].ID}); err != nil {
 		t.Fatal(err)
 	}

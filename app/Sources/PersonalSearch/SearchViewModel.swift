@@ -10,6 +10,7 @@ final class SearchViewModel: ObservableObject {
     @Published var indexingState = IndexingState()
     @Published var failures: [ExtractionFailure] = []
     @Published var failureCount = 0
+    @Published var semanticPending = 0
     @Published var connected = false
     @Published var searching = false
     @Published var startupError: String?
@@ -209,6 +210,7 @@ final class SearchViewModel: ObservableObject {
             indexingState = state.indexing
             folders = state.folders
             failureCount = state.failureCount
+            semanticPending = state.semanticPending
             await refreshGmailAccounts()
             connected = true
             startupError = nil

@@ -159,8 +159,12 @@ func (server *Server) handle(ctx context.Context, request Request) Response {
 		if err != nil {
 			return internalFailure(request.ID, err)
 		}
+		pendingSemantic, err := server.store.PendingSemanticChunkCount(ctx)
+		if err != nil {
+			return internalFailure(request.ID, err)
+		}
 		return success(request.ID, map[string]any{
-			"indexing": server.manager.State(), "folders": folders, "failure_count": len(failures),
+			"indexing": server.manager.State(), "folders": folders, "failure_count": len(failures), "semantic_pending": pendingSemantic,
 		})
 	case "gmail_accounts":
 		accounts, err := server.store.ListGmailAccounts(ctx)

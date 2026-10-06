@@ -81,7 +81,8 @@ struct SearchView: View {
             IndexingStatusView(
                 state: model.indexingState,
                 connected: model.connected,
-                hasFolders: !model.folders.isEmpty
+                hasFolders: !model.folders.isEmpty,
+                semanticPending: model.semanticPending
             )
             optionsMenu
         }
@@ -143,7 +144,7 @@ struct SearchView: View {
                 actionTitle: "Choose Folder"
             ) { Task { await model.chooseFolder() } }
         } else if model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            ReadyStateView(folderCount: model.folders.count, indexingState: model.indexingState) {
+            ReadyStateView(folderCount: model.folders.count, indexingState: model.indexingState, semanticPending: model.semanticPending) {
                 showingFolders = true
             }
         } else if model.searching && model.results.isEmpty {
@@ -207,6 +208,7 @@ private struct IndexingStatusView: View {
     let state: IndexingState
     let connected: Bool
     let hasFolders: Bool
+    let semanticPending: Int
 
     var body: some View {
         HStack(spacing: 6) {
@@ -230,6 +232,7 @@ private struct IndexingStatusView: View {
         if !connected { return "Starting" }
         if state.paused { return "Paused" }
         if state.indexing { return "Indexing" }
+        if semanticPending > 0 { return "Preparing related search" }
         if hasFolders && state.watchedPaths == 0 { return "Not watching" }
         return "Ready"
     }
@@ -237,12 +240,14 @@ private struct IndexingStatusView: View {
     private var icon: String {
         if !connected { return "clock" }
         if state.paused { return "pause.fill" }
+        if semanticPending > 0 { return "sparkles" }
         if hasFolders && state.watchedPaths == 0 { return "eye.slash" }
         return "checkmark"
     }
 
     private var tint: Color {
         if state.paused || (hasFolders && state.watchedPaths == 0 && !state.indexing) { return .orange }
+        if semanticPending > 0 { return .blue }
         return .green
     }
 }
@@ -410,6 +415,7 @@ private struct MessageStateView: View {
 private struct ReadyStateView: View {
     let folderCount: Int
     let indexingState: IndexingState
+    let semanticPending: Int
     let manage: () -> Void
 
     var body: some View {
@@ -418,12 +424,19 @@ private struct ReadyStateView: View {
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(indexingState.indexing ? Color.accentColor : Color.secondary)
             Text(indexingState.indexing ? "Building your local index" : "Ready when you are").font(.headline)
-            Text("\(folderCount) \(folderCount == 1 ? "folder" : "folders") selected · Search exact text or related ideas")
+            Text(readyMessage)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Manage Folders", action: manage).buttonStyle(.link)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var readyMessage: String {
+        if semanticPending > 0 {
+            return "Preparing related search for \(semanticPending) \(semanticPending == 1 ? "passage" : "passages")"
+        }
+        return "\(folderCount) \(folderCount == 1 ? "folder" : "folders") selected · Search exact text or related ideas"
     }
 }
 

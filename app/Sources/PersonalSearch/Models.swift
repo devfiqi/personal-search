@@ -99,10 +99,12 @@ struct ApplicationState: Codable {
     let indexing: IndexingState
     let folders: [IndexedFolder]
     let failureCount: Int
+    let semanticPending: Int
 
     enum CodingKeys: String, CodingKey {
         case indexing, folders
         case failureCount = "failure_count"
+        case semanticPending = "semantic_pending"
     }
 }
 

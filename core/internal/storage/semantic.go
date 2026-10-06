@@ -18,6 +18,18 @@ type SemanticChunk struct {
 	Text         string
 }
 
+func (store *Store) PendingSemanticChunkCount(ctx context.Context) (int, error) {
+	var count int
+	if err := store.database.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM semantic_chunks
+JOIN documents ON documents.id = semantic_chunks.document_id
+WHERE semantic_chunks.vector_state = 'pending' AND documents.status = 'indexed'`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count pending semantic chunks: %w", err)
+	}
+	return count, nil
+}
+
 func (store *Store) ListPendingSemanticChunks(ctx context.Context, limit int) ([]SemanticChunk, error) {
 	if limit <= 0 {
 		limit = 32
