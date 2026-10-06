@@ -155,6 +155,7 @@ struct SearchView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 6) {
+                    ResultListHeader(resultCount: model.results.count)
                     ForEach(Array(model.results.enumerated()), id: \.element.id) { index, result in
                         ResultRow(result: result, isTopResult: index == 0) { model.open(result) }
                     }
@@ -262,6 +263,12 @@ private struct ResultRow: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(.quaternary, in: Capsule())
+                        Text(result.matchLabel)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(matchTint)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(matchTint.opacity(0.12), in: Capsule())
                         Spacer(minLength: 8)
                         Text(result.modifiedLabel).font(.caption).foregroundStyle(.tertiary)
                     }
@@ -285,8 +292,35 @@ private struct ResultRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(ResultButtonStyle())
-        .accessibilityLabel("\(result.name), \(result.typeLabel), \(result.modifiedLabel)")
+        .accessibilityLabel("\(result.name), \(result.typeLabel), \(result.matchLabel), \(result.modifiedLabel)")
         .accessibilityHint("Opens the original document")
+    }
+
+    private var matchTint: Color {
+        switch result.matchType {
+        case "semantic": return .purple
+        case "hybrid": return .blue
+        default: return .secondary
+        }
+    }
+}
+
+private struct ResultListHeader: View {
+    let resultCount: Int
+
+    var body: some View {
+        HStack {
+            Text("\(resultCount) \(resultCount == 1 ? "result" : "results")")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("On this Mac")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -377,7 +411,7 @@ private struct ReadyStateView: View {
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(indexingState.indexing ? Color.accentColor : Color.secondary)
             Text(indexingState.indexing ? "Building your local index" : "Ready when you are").font(.headline)
-            Text("\(folderCount) \(folderCount == 1 ? "folder" : "folders") selected · Search by keyword or exact phrase")
+            Text("\(folderCount) \(folderCount == 1 ? "folder" : "folders") selected · Search exact text or related ideas")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Manage Folders", action: manage).buttonStyle(.link)

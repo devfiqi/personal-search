@@ -191,7 +191,8 @@ final class SearchViewModel: ObservableObject {
             extensionName: ".md",
             modifiedAtNS: Int64(Date().timeIntervalSince1970 * 1_000_000_000),
             snippet: "The [project] launch [notes] and next steps…",
-            score: -1
+            score: -1,
+            matchType: "keyword"
         )]
         return model
     }

@@ -119,7 +119,7 @@ func (service *Service) Search(ctx context.Context, query string, limit int) ([]
 		seenDocuments[chunk.DocumentID] = struct{}{}
 		results = append(results, storage.SearchResult{
 			ID: chunk.DocumentID, Path: chunk.Path, Name: chunk.Name, Extension: chunk.Extension,
-			ModifiedAtNS: chunk.ModifiedAtNS, Snippet: chunk.Text, Score: 1 - match.Distance,
+			ModifiedAtNS: chunk.ModifiedAtNS, Snippet: chunk.Text, Score: 1 - match.Distance, MatchType: "semantic",
 		})
 		if len(results) == limit {
 			break

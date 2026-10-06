@@ -50,11 +50,18 @@ func (service *Service) Search(ctx context.Context, query string, limit int) ([]
 	merged := make(map[int64]*rankedResult, len(keywords)+len(semantic))
 	add := func(results []storage.SearchResult, semanticResult bool) {
 		for index, result := range results {
+			matchType := "keyword"
+			if semanticResult {
+				matchType = "semantic"
+			}
 			item, exists := merged[result.ID]
 			if !exists {
 				copy := result
+				copy.MatchType = matchType
 				item = &rankedResult{result: copy}
 				merged[result.ID] = item
+			} else if item.result.MatchType != matchType {
+				item.result.MatchType = "hybrid"
 			}
 			item.score += 1 / (reciprocalRankOffset + float64(index+1))
 			if semanticResult && item.result.Snippet == "" {

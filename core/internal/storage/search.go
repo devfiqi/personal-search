@@ -15,6 +15,7 @@ type SearchResult struct {
 	ModifiedAtNS int64   `json:"modified_at_ns"`
 	Snippet      string  `json:"snippet"`
 	Score        float64 `json:"score"`
+	MatchType    string  `json:"match_type"`
 }
 
 func (store *Store) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
@@ -94,6 +95,7 @@ LIMIT ?`, match, limit)
 		); err != nil {
 			return nil, fmt.Errorf("read search result: %w", err)
 		}
+		result.MatchType = "keyword"
 		results = append(results, result)
 	}
 	if err := rows.Err(); err != nil {

@@ -15,9 +15,11 @@ struct SearchResult: Codable, Identifiable, Hashable {
     let modifiedAtNS: Int64
     let snippet: String
     let score: Double
+    let matchType: String
 
     enum CodingKeys: String, CodingKey {
         case id, path, name, snippet, score
+        case matchType = "match_type"
         case extensionName = "extension"
         case modifiedAtNS = "modified_at_ns"
     }
@@ -28,6 +30,14 @@ struct SearchResult: Codable, Identifiable, Hashable {
     }
 
     var iconName: String { extensionName == ".pdf" ? "doc.richtext" : "doc.text" }
+
+    var matchLabel: String {
+        switch matchType {
+        case "semantic": return "RELATED"
+        case "hybrid": return "TEXT + RELATED"
+        default: return "TEXT MATCH"
+        }
+    }
 
     var modifiedLabel: String {
         guard modifiedAtNS > 0 else { return "Unknown date" }
