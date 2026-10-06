@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/devfiqi/personal-search/core/internal/extractor"
+	"github.com/devfiqi/personal-search/core/internal/gmail"
 	"github.com/devfiqi/personal-search/core/internal/indexer"
 	"github.com/devfiqi/personal-search/core/internal/localapi"
 	"github.com/devfiqi/personal-search/core/internal/search"
@@ -81,7 +82,9 @@ func runServe(args []string, errorsOutput io.Writer) error {
 		return err
 	}
 	defer manager.Close()
-	return localapi.NewWithSearcher(*socketPath, store, manager, searcher).Serve(ctx)
+	server := localapi.NewWithSearcher(*socketPath, store, manager, searcher)
+	server.SetGmailConnector(gmail.NewClient())
+	return server.Serve(ctx)
 }
 
 func runInit(args []string, output io.Writer, errorsOutput io.Writer) error {

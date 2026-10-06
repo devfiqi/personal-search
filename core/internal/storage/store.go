@@ -89,6 +89,12 @@ CREATE TABLE IF NOT EXISTS semantic_chunks (
 CREATE INDEX IF NOT EXISTS semantic_chunks_document_id ON semantic_chunks(document_id);
 CREATE INDEX IF NOT EXISTS semantic_chunks_vector_state ON semantic_chunks(vector_state);
 
+CREATE TABLE IF NOT EXISTS gmail_accounts (
+    email TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     name,
     path,

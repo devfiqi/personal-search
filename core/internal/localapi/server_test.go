@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/devfiqi/personal-search/core/internal/gmail"
 	"github.com/devfiqi/personal-search/core/internal/indexer"
 	"github.com/devfiqi/personal-search/core/internal/storage"
 )
@@ -132,6 +133,38 @@ func TestServerRejectsWrongVersion(t *testing.T) {
 	if response.OK || response.Error.Code != "unsupported_version" {
 		t.Fatalf("failure response = %+v", response)
 	}
+}
+
+func TestServerConnectsAndRegistersGmailAccount(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := indexer.NewManager(indexer.New(store, nil), store)
+	server := New("", store, manager)
+	server.SetGmailConnector(fakeGmailConnector{})
+
+	connected := server.handle(context.Background(), Request{Version: 1, ID: "connect", Method: "gmail_connect", Params: raw(map[string]string{"client_id": "client.apps.googleusercontent.com"})})
+	account := decodeResult[gmail.Account](t, connected)
+	if account.RefreshToken != "refresh-token" {
+		t.Fatalf("account = %+v", account)
+	}
+	registered := server.handle(context.Background(), Request{Version: 1, ID: "add", Method: "gmail_add_account", Params: raw(storage.GmailAccount{Email: account.Email, ClientID: account.ClientID})})
+	if !registered.OK {
+		t.Fatalf("register response = %+v", registered)
+	}
+	accounts := server.handle(context.Background(), Request{Version: 1, ID: "list", Method: "gmail_accounts", Params: raw(map[string]string{})})
+	listed := decodeResult[[]storage.GmailAccount](t, accounts)
+	if len(listed) != 1 || listed[0].Email != account.Email {
+		t.Fatalf("accounts = %+v", listed)
+	}
+}
+
+type fakeGmailConnector struct{}
+
+func (fakeGmailConnector) Connect(context.Context, string) (gmail.Account, error) {
+	return gmail.Account{Email: "person@example.com", ClientID: "client.apps.googleusercontent.com", RefreshToken: "refresh-token"}, nil
 }
 
 func waitForSocket(t *testing.T, path string, serverDone <-chan error) {

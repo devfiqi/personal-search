@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/devfiqi/personal-search/core/internal/gmail"
 	"github.com/devfiqi/personal-search/core/internal/indexer"
 	"github.com/devfiqi/personal-search/core/internal/storage"
 )
@@ -44,6 +45,7 @@ type Server struct {
 	store      *storage.Store
 	manager    *indexer.Manager
 	searcher   Searcher
+	gmail      GmailConnector
 	listener   net.Listener
 	closeOnce  sync.Once
 }
@@ -52,12 +54,20 @@ type Searcher interface {
 	Search(ctx context.Context, query string, limit int) ([]storage.SearchResult, error)
 }
 
+type GmailConnector interface {
+	Connect(ctx context.Context, clientID string) (gmail.Account, error)
+}
+
 func New(socketPath string, store *storage.Store, manager *indexer.Manager) *Server {
 	return NewWithSearcher(socketPath, store, manager, store)
 }
 
 func NewWithSearcher(socketPath string, store *storage.Store, manager *indexer.Manager, searcher Searcher) *Server {
 	return &Server{socketPath: socketPath, store: store, manager: manager, searcher: searcher}
+}
+
+func (server *Server) SetGmailConnector(connector GmailConnector) {
+	server.gmail = connector
 }
 
 func (server *Server) Serve(ctx context.Context) error {
@@ -148,6 +158,48 @@ func (server *Server) handle(ctx context.Context, request Request) Response {
 		return success(request.ID, map[string]any{
 			"indexing": server.manager.State(), "folders": folders, "failure_count": len(failures),
 		})
+	case "gmail_accounts":
+		accounts, err := server.store.ListGmailAccounts(ctx)
+		if err != nil {
+			return internalFailure(request.ID, err)
+		}
+		return success(request.ID, accounts)
+	case "gmail_connect":
+		var params struct {
+			ClientID string `json:"client_id"`
+		}
+		if err := decodeParams(request.Params, &params); err != nil || params.ClientID == "" {
+			return failure(request.ID, "invalid_request", "A Google Desktop OAuth client ID is required")
+		}
+		if server.gmail == nil {
+			return failure(request.ID, "gmail_unavailable", "Gmail connection is unavailable")
+		}
+		account, err := server.gmail.Connect(ctx, params.ClientID)
+		if err != nil {
+			return failure(request.ID, "gmail_connection_failed", err.Error())
+		}
+		return success(request.ID, account)
+	case "gmail_add_account":
+		var params storage.GmailAccount
+		if err := decodeParams(request.Params, &params); err != nil {
+			return failure(request.ID, "invalid_request", "Gmail account parameters are invalid")
+		}
+		if err := server.store.RegisterGmailAccount(ctx, params); err != nil {
+			return internalFailure(request.ID, err)
+		}
+		return success(request.ID, params)
+	case "gmail_remove_account":
+		var params struct {
+			Email string `json:"email"`
+		}
+		if err := decodeParams(request.Params, &params); err != nil || params.Email == "" {
+			return failure(request.ID, "invalid_request", "A Gmail account email is required")
+		}
+		removed, err := server.store.RemoveGmailAccount(ctx, params.Email)
+		if err != nil {
+			return internalFailure(request.ID, err)
+		}
+		return success(request.ID, map[string]bool{"removed": removed})
 	case "folders":
 		folders, err := server.store.ListFolders(ctx)
 		if err != nil {
