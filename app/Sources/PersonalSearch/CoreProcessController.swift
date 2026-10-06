@@ -62,8 +62,13 @@ final class CoreProcessController {
         let fileManager = FileManager.default
         let current = URL(fileURLWithPath: fileManager.currentDirectoryPath)
         var arguments: [String] = []
+        if let resources = Bundle.main.resourceURL {
+            let bundledWorker = resources.appendingPathComponent("Extractor/personal-search-extractor")
+            if fileManager.isExecutableFile(atPath: bundledWorker.path) {
+                return ["--extractor-bin", bundledWorker.path]
+            }
+        }
         let pythonCandidates = [
-            Bundle.main.resourceURL?.appendingPathComponent("Python/bin/python3"),
             environment["PERSONAL_SEARCH_PYTHON"].map(URL.init(fileURLWithPath:)),
             current.appendingPathComponent("extractor/.venv/bin/python"),
         ].compactMap { $0 }
@@ -71,7 +76,6 @@ final class CoreProcessController {
             arguments += ["--python", python.path]
         }
         let sourceCandidates = [
-            Bundle.main.resourceURL?.appendingPathComponent("Extractor"),
             environment["PERSONAL_SEARCH_EXTRACTOR_SRC"].map(URL.init(fileURLWithPath:)),
             current.appendingPathComponent("extractor/src"),
         ].compactMap { $0 }

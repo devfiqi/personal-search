@@ -47,6 +47,7 @@ func runServe(args []string, errorsOutput io.Writer) error {
 	socketPath := flags.String("socket", "", "path to the private Unix socket")
 	pythonExecutable := flags.String("python", defaultValue("PERSONAL_SEARCH_PYTHON", "python3"), "Python worker executable")
 	extractorSource := flags.String("extractor-src", defaultValue("PERSONAL_SEARCH_EXTRACTOR_SRC", "extractor/src"), "Python extractor source directory")
+	extractorExecutable := flags.String("extractor-bin", defaultValue("PERSONAL_SEARCH_EXTRACTOR_BIN", ""), "standalone PDF extractor executable")
 	extractionTimeout := flags.Duration("extract-timeout", 60*time.Second, "PDF extraction timeout")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -64,7 +65,7 @@ func runServe(args []string, errorsOutput io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve extractor source: %w", err)
 	}
-	worker := extractor.NewPython(*pythonExecutable, absoluteExtractorSource, *extractionTimeout)
+	worker := newExtractor(*extractorExecutable, *pythonExecutable, absoluteExtractorSource, *extractionTimeout)
 	defer worker.Close()
 	manager := indexer.NewManager(indexer.New(store, worker), store)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -103,6 +104,7 @@ func runIndex(args []string, output io.Writer, errorsOutput io.Writer) error {
 	folderPath := flags.String("folder", "", "folder to index")
 	pythonExecutable := flags.String("python", defaultValue("PERSONAL_SEARCH_PYTHON", "python3"), "Python worker executable")
 	extractorSource := flags.String("extractor-src", defaultValue("PERSONAL_SEARCH_EXTRACTOR_SRC", "extractor/src"), "Python extractor source directory")
+	extractorExecutable := flags.String("extractor-bin", defaultValue("PERSONAL_SEARCH_EXTRACTOR_BIN", ""), "standalone PDF extractor executable")
 	extractionTimeout := flags.Duration("extract-timeout", 60*time.Second, "PDF extraction timeout")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -121,7 +123,7 @@ func runIndex(args []string, output io.Writer, errorsOutput io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve extractor source: %w", err)
 	}
-	worker := extractor.NewPython(*pythonExecutable, absoluteExtractorSource, *extractionTimeout)
+	worker := newExtractor(*extractorExecutable, *pythonExecutable, absoluteExtractorSource, *extractionTimeout)
 	defer worker.Close()
 
 	report, err := indexer.New(store, worker).IndexFolder(context.Background(), *folderPath)
@@ -170,4 +172,11 @@ func defaultValue(environmentName string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func newExtractor(executable string, python string, source string, timeout time.Duration) *extractor.Client {
+	if executable != "" {
+		return extractor.NewExecutable(executable, timeout)
+	}
+	return extractor.NewPython(python, source, timeout)
 }

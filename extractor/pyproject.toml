@@ -11,5 +11,10 @@ dependencies = [
     "pypdf==6.19.0",
 ]
 
+[project.optional-dependencies]
+build = [
+    "pyinstaller==6.22.3",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]

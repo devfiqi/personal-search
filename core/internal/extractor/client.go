@@ -90,6 +90,10 @@ func NewPython(executable string, modulePath string, timeout time.Duration) *Cli
 	})
 }
 
+func NewExecutable(executable string, timeout time.Duration) *Client {
+	return New(Config{Executable: executable, Timeout: timeout})
+}
+
 func (client *Client) ExtractPDF(ctx context.Context, path string) (PDFResult, error) {
 	client.mutex.Lock()
 	defer client.mutex.Unlock()

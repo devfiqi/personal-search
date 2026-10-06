@@ -40,7 +40,7 @@ struct IndexingState: Codable, Equatable {
     var paused = false
     var indexing = false
     var lastIndexed: String?
-    var lastError = ""
+    var lastError: String?
     var pendingScan = false
     var watchedPaths = 0
 
